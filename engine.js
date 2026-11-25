@@ -377,6 +377,11 @@ export function isAllowed(exercise, ctx = {}) {
     }
   }
 
+  // 5. Thermique / sauna bloqué si tolérance cardiovasculaire non confirmée
+  if (exercise.family === "thermal" && safeCtx.saunaCleared === false) {
+    reasons.push("sauna_not_cleared");
+  }
+
   return {
     ok: reasons.length === 0,
     reasons,

@@ -368,3 +368,17 @@ test("buildSession : leve une erreur sur un protocolId inconnu", () => {
     /Protocole inconnu/,
   );
 });
+
+test("isAllowed : saunaCleared=false bloque thermal sans bloquer IHHT ni KAATSU", () => {
+  const ctx = makeBaseCtx({ saunaCleared: false });
+  const allEx = Object.values(EXERCISES_BY_ID);
+  const ihhtEx = allEx.find((e) => e.family === "hyperoxia_ihht");
+  const kaatsuEx = allEx.find((e) => e.family === "kaatsu");
+  const thermalEx = allEx.find((e) => e.family === "thermal");
+
+  assert.equal(isAllowed(ihhtEx, ctx).ok, true);
+  assert.equal(isAllowed(kaatsuEx, ctx).ok, true);
+  const thermalRes = isAllowed(thermalEx, ctx);
+  assert.equal(thermalRes.ok, false);
+  assert.ok(thermalRes.reasons.includes("sauna_not_cleared"));
+});

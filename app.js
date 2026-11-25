@@ -1049,7 +1049,6 @@ function buildEngineContextFromSettings() {
   if (s.kaatsuHta) userContraindications.add("uncontrolled_hypertension");
   if (s.kaatsuVarices) userContraindications.add("severe_varicose_veins");
   if (s.kaatsuPregnancy) userContraindications.add("pregnancy");
-  if (!s.saunaCleared) userContraindications.add("cardiac_instability");
   if (s.lymphedemaAvFistula) userContraindications.add("lymphedema_av_fistula");
   if (s.severeRespiratoryAnemia) {
     userContraindications.add("severe_respiratory_anemia");
@@ -1082,6 +1081,7 @@ function buildEngineContextFromSettings() {
     userContraindications,
     equipmentAvailable,
     todayActivities,
+    saunaCleared: Boolean(s.saunaCleared),
     kaatsuSupervisedOnce: !s.kaatsuFirstAlone,
     spo2ThresholdPct: state.settings.spo2ThresholdPct,
     now: new Date(),
@@ -1093,6 +1093,7 @@ function formatRemovalReason(reason) {
   if (reason === "first_kaatsu_unsupervised")
     return "1re séance KAATSU sans supervision";
   if (reason === "missing_oximeter") return "Oxymètre absent ou sécurité IHHT non confirmée";
+  if (reason === "sauna_not_cleared") return "Tolérance cardiovasculaire sauna/thermique non confirmée";
   if (reason === "unsafe_spo2_threshold") return "Seuil SpO₂ < 80 % interdit";
   if (reason === "kaatsu_max_continuous_exceeded")
     return "Plafond de durée continue KAATSU dépassé";
