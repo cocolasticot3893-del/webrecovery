@@ -642,15 +642,45 @@ body {
   background: var(--bg-surface);
 }
 
-.spo2-guard-box.is-alert {
-  border-color: rgba(244, 63, 94, 0.6);
-  background: rgba(244, 63, 94, 0.14);
+.spo2-guard-box.is-alert,
+.spo2-guard-box.is-stale {
+  border-color: rgba(244, 63, 94, 0.72);
+  background: rgba(244, 63, 94, 0.16);
+}
+
+.spo2-guard-info {
+  flex: 1 1 220px;
+}
+
+.spo2-stale-alert {
+  margin-top: 0.45rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(244, 63, 94, 0.65);
+  background: rgba(190, 18, 60, 0.28);
+  color: #fecdd3;
+  font-size: 0.8rem;
+  font-weight: 600;
 }
 
 .spo2-input-group {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
+}
+
+.ble-status-text {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.ble-status-text.is-connected {
+  color: #6ee7b7;
+}
+
+.ble-status-text.is-unsupported {
+  color: #fcd34d;
 }
 
 .phase-queue {

@@ -176,6 +176,31 @@ class WebAudioBeeper {
 }
 
 /**
+ * Détermine si une phase correspond à une exposition hypoxique nécessitant
+ * la surveillance de fraîcheur SpO₂.
+ * @param {Record<string, unknown> | null | undefined} phase
+ * @returns {boolean}
+ */
+export function isPhaseHypoxic(phase) {
+  if (!phase || typeof phase !== "object") {
+    return false;
+  }
+  const meta =
+    phase.meta && typeof phase.meta === "object"
+      ? /** @type {Record<string, unknown>} */ (phase.meta)
+      : null;
+  if (meta?.isHypoxia === true) {
+    return true;
+  }
+  if (meta?.isHypoxia === false) {
+    return false;
+  }
+  return Boolean(
+    meta?.isIhht === true && /hypox/i.test(String(phase.label ?? ""))
+  );
+}
+
+/**
  * Interprète la valeur de retour de `onSafetyCheck`.
  * Retourne `{ ok: true }` sauf si `false` ou `{ ok: false }` / `{ interrupt: true }`.
  * @param {unknown} result
@@ -211,8 +236,11 @@ export class MultiPhaseTimer {
    * @param {(phaseInfo: object) => void} [options.onPhase]
    * @param {(summary: object) => void} [options.onDone]
    * @param {(snapshot: object) => (boolean | object | Promise<boolean | object>)} [options.onSafetyCheck]
+   * @param {(alert: object) => void} [options.onSafetyAlert]
    * @param {(state: object) => void} [options.onStateChange]
    * @param {number} [options.tickIntervalMs=250]
+   * @param {number} [options.spo2MaxAgeMs=60000]
+   * @param {number} [options.spo2ThresholdPct=85]
    * @param {boolean} [options.muted=false]
    * @param {boolean} [options.vibrateEnabled=true]
    * @param {{ now: () => number, setInterval: Function, clearInterval: Function }} [options.clock]
@@ -226,10 +254,20 @@ export class MultiPhaseTimer {
     this.onDone = typeof options.onDone === "function" ? options.onDone : null;
     this.onSafetyCheck =
       typeof options.onSafetyCheck === "function" ? options.onSafetyCheck : null;
+    this.onSafetyAlert =
+      typeof options.onSafetyAlert === "function" ? options.onSafetyAlert : null;
     this.onStateChange =
       typeof options.onStateChange === "function" ? options.onStateChange : null;
 
     this.tickIntervalMs = Math.max(50, Number(options.tickIntervalMs) || 250);
+    this.spo2MaxAgeMs =
+      Number.isFinite(Number(options.spo2MaxAgeMs)) &&
+      Number(options.spo2MaxAgeMs) > 0
+        ? Number(options.spo2MaxAgeMs)
+        : 60_000;
+    this.spo2ThresholdPct = Number.isFinite(Number(options.spo2ThresholdPct))
+      ? Number(options.spo2ThresholdPct)
+      : 85;
     this.muted = Boolean(options.muted);
     this.vibrateEnabled = options.vibrateEnabled !== false;
 
@@ -280,6 +318,14 @@ export class MultiPhaseTimer {
     this.intervalId = null;
     this.wakeLockSentinel = null;
     this.interruptReason = "";
+    this.pauseReason = "";
+    /** @type {number | null} */
+    this.lastSpo2Value = null;
+    /** @type {number | null} */
+    this.lastSpo2TimestampMs = null;
+    this._awaitingFreshSpo2 = false;
+    /** @type {number | null} */
+    this._hypoxiaAnchorMs = null;
 
     if (Array.isArray(options.phases) && options.phases.length > 0) {
       this.load(options.phases);
@@ -306,6 +352,9 @@ export class MultiPhaseTimer {
     this.checkedSeconds = 0;
     this.lastTickAtMs = 0;
     this.interruptReason = "";
+    this.pauseReason = "";
+    this._awaitingFreshSpo2 = false;
+    this._hypoxiaAnchorMs = null;
     this._emitStateChange();
     this._emitTick();
     return this.steps;
@@ -319,6 +368,42 @@ export class MultiPhaseTimer {
   /** @param {boolean} enabled */
   setVibrateEnabled(enabled) {
     this.vibrateEnabled = Boolean(enabled);
+  }
+
+  /** @param {number} thresholdPct */
+  setSpo2ThresholdPct(thresholdPct) {
+    const val = Number(thresholdPct);
+    if (Number.isFinite(val)) {
+      this.spo2ThresholdPct = val;
+    }
+  }
+
+  /**
+   * Enregistre une mesure SpO₂ et son horodatage pour le watchdog de fraîcheur.
+   * @param {number} value
+   * @param {number} [timestampMs]
+   * @returns {boolean}
+   */
+  recordSpo2Reading(value, timestampMs = this.clock.now()) {
+    const numericVal = Number(value);
+    if (!Number.isFinite(numericVal)) {
+      return false;
+    }
+    const ts = Number.isFinite(Number(timestampMs))
+      ? Number(timestampMs)
+      : this.clock.now();
+    this.lastSpo2Value = numericVal;
+    this.lastSpo2TimestampMs = ts;
+    this._hypoxiaAnchorMs = null;
+
+    if (
+      this.pauseReason === "spo2_stale" &&
+      numericVal >= this.spo2ThresholdPct &&
+      this.clock.now() - ts <= this.spo2MaxAgeMs
+    ) {
+      this._awaitingFreshSpo2 = false;
+    }
+    return true;
   }
 
   /**
@@ -343,7 +428,14 @@ export class MultiPhaseTimer {
 
     this._clearInterval();
     this.status = "running";
-    this.lastTickAtMs = this.clock.now();
+    this.pauseReason = "";
+    this._awaitingFreshSpo2 = false;
+    const now = this.clock.now();
+    this.lastTickAtMs = now;
+    this._hypoxiaAnchorMs =
+      this.lastSpo2TimestampMs === null && isPhaseHypoxic(this.steps[0])
+        ? now
+        : null;
 
     this._acquireWakeLock();
     this._cue("start", [40]);
@@ -360,25 +452,35 @@ export class MultiPhaseTimer {
 
   /**
    * Met le minuteur en pause en conservant la progression exacte.
+   * @param {string} [reason="manual"]
    * @returns {boolean}
    */
-  pause() {
+  pause(reason = "manual") {
     if (this.status !== "running") {
       return false;
     }
-    const now = this.clock.now();
-    const deltaMs = Math.max(0, now - this.lastTickAtMs);
-    this.lastTickAtMs = now;
-    if (deltaMs > 0) {
-      this._advance(deltaMs);
-    }
-    if (this.status !== "running") {
-      return false;
+    const normalizedReason =
+      typeof reason === "string" && reason.trim() ? reason.trim() : "manual";
+
+    if (normalizedReason !== "spo2_stale") {
+      const now = this.clock.now();
+      const deltaMs = Math.max(0, now - this.lastTickAtMs);
+      this.lastTickAtMs = now;
+      if (deltaMs > 0) {
+        this._advance(deltaMs);
+      }
+      if (this.status !== "running") {
+        return false;
+      }
     }
 
     this._clearInterval();
     this._releaseWakeLock();
     this.status = "paused";
+    this.pauseReason = normalizedReason;
+    if (normalizedReason === "spo2_stale") {
+      this._awaitingFreshSpo2 = true;
+    }
     this._emitStateChange();
     this._emitTick();
     return true;
@@ -386,13 +488,32 @@ export class MultiPhaseTimer {
 
   /**
    * Reprend après une pause.
+   * Bloque la reprise si `pauseReason === "spo2_stale"` sans nouvelle mesure valide (`>= spo2ThresholdPct`).
    * @returns {boolean}
    */
   resume() {
     if (this.status !== "paused" || this.steps.length === 0) {
       return false;
     }
+
+    if (this.pauseReason === "spo2_stale") {
+      const now = this.clock.now();
+      const hasValidValue =
+        typeof this.lastSpo2Value === "number" &&
+        Number.isFinite(this.lastSpo2Value) &&
+        this.lastSpo2Value >= this.spo2ThresholdPct;
+      const isFresh =
+        typeof this.lastSpo2TimestampMs === "number" &&
+        Number.isFinite(this.lastSpo2TimestampMs) &&
+        now - this.lastSpo2TimestampMs <= this.spo2MaxAgeMs;
+      if (this._awaitingFreshSpo2 || !hasValidValue || !isFresh) {
+        return false;
+      }
+    }
+
     this.status = "running";
+    this.pauseReason = "";
+    this._awaitingFreshSpo2 = false;
     this.lastTickAtMs = this.clock.now();
     this._acquireWakeLock();
     this._cue("phase", [30]);
@@ -463,6 +584,9 @@ export class MultiPhaseTimer {
     this.checkedSeconds = 0;
     this.lastTickAtMs = 0;
     this.interruptReason = "";
+    this.pauseReason = "";
+    this._awaitingFreshSpo2 = false;
+    this._hypoxiaAnchorMs = null;
     this._emitStateChange();
     this._emitTick();
   }
@@ -487,9 +611,14 @@ export class MultiPhaseTimer {
       ? Math.max(0, step.durationMs - this.phaseElapsedMs)
       : 0;
     const remainingTotalMs = this._computeRemainingTotalMs();
+    const spo2AgeMs =
+      this.lastSpo2TimestampMs !== null
+        ? Math.max(0, this.clock.now() - this.lastSpo2TimestampMs)
+        : null;
 
     return {
       status: this.status,
+      pauseReason: this.pauseReason,
       stepIndex: this.currentStepIndex,
       totalSteps: this.steps.length,
       phase: step,
@@ -506,6 +635,10 @@ export class MultiPhaseTimer {
       totalRemainingSec: Math.ceil(remainingTotalMs / 1000),
       totalPlannedSec: Math.round(this.totalPlannedDurationMs / 1000),
       interruptReason: this.interruptReason,
+      lastSpo2Value: this.lastSpo2Value,
+      lastSpo2TimestampMs: this.lastSpo2TimestampMs,
+      spo2AgeMs,
+      isHypoxiaPhase: isPhaseHypoxic(step),
     };
   }
 
@@ -521,6 +654,70 @@ export class MultiPhaseTimer {
   }
 
   /**
+   * Vérifie le watchdog de fraîcheur SpO₂ pendant une phase hypoxique.
+   * @returns {boolean} `true` si une pause de sécurité a été déclenchée.
+   * @private
+   */
+  _checkSpo2Watchdog() {
+    if (this.status !== "running") {
+      return false;
+    }
+    const step = this.steps[this.currentStepIndex] ?? null;
+    if (!isPhaseHypoxic(step)) {
+      this._hypoxiaAnchorMs = null;
+      return false;
+    }
+
+    const now = this.clock.now();
+    if (this.lastSpo2TimestampMs === null) {
+      if (this._hypoxiaAnchorMs === null) {
+        this._hypoxiaAnchorMs = now;
+        return false;
+      }
+      const anchorAgeMs = now - this._hypoxiaAnchorMs;
+      if (anchorAgeMs > this.spo2MaxAgeMs) {
+        this._triggerSpo2Stale(anchorAgeMs, step);
+        return true;
+      }
+      return false;
+    }
+
+    const ageMs = now - this.lastSpo2TimestampMs;
+    if (ageMs > this.spo2MaxAgeMs) {
+      this._triggerSpo2Stale(ageMs, step);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Déclenche la pause de sécurité `spo2_stale` et l'alerte sonore/visuelle.
+   * @param {number} ageMs
+   * @param {Record<string, unknown> | null} step
+   * @private
+   */
+  _triggerSpo2Stale(ageMs, step) {
+    const ageSec = Math.floor(ageMs / 1000);
+    const maxSec = Math.round(this.spo2MaxAgeMs / 1000);
+    const reasonText = `Alerte SpO₂ obsolète (${ageSec} s sans nouvelle mesure en phase hypoxique > ${maxSec} s).`;
+    this._awaitingFreshSpo2 = true;
+    this.pause("spo2_stale");
+    this._cue("alert", [250, 100, 250, 100, 350]);
+    if (this.onSafetyAlert) {
+      this.onSafetyAlert({
+        code: "spo2_stale",
+        reason: reasonText,
+        ageMs,
+        spo2MaxAgeMs: this.spo2MaxAgeMs,
+        lastSpo2Value: this.lastSpo2Value,
+        lastSpo2TimestampMs: this.lastSpo2TimestampMs,
+        phase: step,
+        snapshot: this.getSnapshot(),
+      });
+    }
+  }
+
+  /**
    * Avance le temps de `deltaMs`, exécute les vérifications de sécurité par seconde
    * et gère les transitions multi-phases.
    * @param {number} deltaMs
@@ -528,6 +725,10 @@ export class MultiPhaseTimer {
    */
   _advance(deltaMs) {
     if (this.status !== "running" || deltaMs <= 0) {
+      return;
+    }
+
+    if (this._checkSpo2Watchdog()) {
       return;
     }
 
@@ -601,6 +802,9 @@ export class MultiPhaseTimer {
     if (transitioned) {
       this._cue("phase", [60, 40, 60]);
       this._emitPhase();
+      if (this._checkSpo2Watchdog()) {
+        return;
+      }
     }
 
     this._emitTick();
@@ -759,6 +963,7 @@ export class MultiPhaseTimer {
     if (this.onStateChange) {
       this.onStateChange({
         status: this.status,
+        pauseReason: this.pauseReason,
         stepIndex: this.currentStepIndex,
         totalSteps: this.steps.length,
         interruptReason: this.interruptReason,

@@ -3,8 +3,8 @@
  * Module ES2024+ zero-build compatible Navigateur et Node.js ESM.
  *
  * Securite physiologique encodee en donnees :
- * - KAATSU / BFR : plafonds de pression SKU selon guides fabricant KAATSU (Sato ; KAATSU Global protocols) et principes de securite BFR / durees max (Patterson et al., 2019).
- * - IHHT / Hyperoxie : deux generateurs portables separes avec phase de bascule des masques et arret SpO2 <= 80-85 % (Serebrovskaya & Xi, 2016).
+ * - KAATSU / BFR : unites proprietaires SKU selon guides fabricant KAATSU (Sato ; Nakajima ; Yasuda ; KAATSU Global protocols), distinctes des recommandations BFR en %LOP / mmHg (Patterson et al., 2019).
+ * - IHHT / Hyperoxie : deux generateurs portables separes avec phase de bascule des masques (15 s) et arret SpO2 <= 80-85 % (Serebrovskaya & Xi, 2016).
  * - Bain froid : conflit strict < 4 h apres musculation / hypertrophie (Roberts et al., 2015).
  */
 
@@ -65,21 +65,23 @@ function buildIhhtPhases(cycles, hypoxiaSec, hyperoxiaSec, switchSec, spo2StopPc
 }
 
 /**
- * Construit les cycles automatiques KAATSU Cycle 2.0 (8 cycles ON/OFF progressifs).
+ * Construit les cycles automatiques KAATSU Cycle 2.0 (<= 8 cycles ON/OFF de 30 s / 5 s par serie).
  * @param {string} limbLabel - Zone ciblee ("bras" ou "jambes").
  * @param {number} onSec - Duree de compression pneumatique (s).
  * @param {number} offSec - Duree de decompression (s).
- * @param {number} cycles - Nombre de cycles ON/OFF.
+ * @param {number} cycles - Nombre de cycles ON/OFF (<= 8 par serie).
  * @param {string} skuRange - Plage de pression SKU cible.
+ * @param {string} [activityLabel] - Action motrice optionnelle pendant la compression.
  * @returns {Array<{label: string, sec: number}>}
  */
-function buildKaatsuCyclePhases(limbLabel, onSec, offSec, cycles, skuRange) {
+function buildKaatsuCyclePhases(limbLabel, onSec, offSec, cycles, skuRange, activityLabel = "") {
+  const onSuffix = activityLabel ? ` — ${activityLabel}` : "";
   const phases = [
-    { label: `Pose bandes ${limbLabel} + reglage Base SKU & Cycle 2.0 (${skuRange})`, sec: 45 },
+    { label: `Pose bandes ${limbLabel} + calibration Base SKU & Cycle 2.0 (${skuRange})`, sec: 45 },
   ];
   for (let i = 1; i <= cycles; i++) {
     phases.push({
-      label: `Cycle ${i}/${cycles} ON - Compression pneumatique (${skuRange})`,
+      label: `Cycle ${i}/${cycles} ON - Compression pneumatique (${skuRange})${onSuffix}`,
       sec: onSec,
     });
     phases.push({
@@ -115,7 +117,7 @@ const RAW_CONTRAINDICATIONS = [
     description:
       "Toute occlusion veineuse partielle (KAATSU/BFR) ou compression pneumatique forte est strictement interdite en cas d'antecedent thrombo-embolique.",
     affectedModalities: ["kaatsu", "compression"],
-    reference: "Patterson et al., 2019",
+    reference: "Patterson et al., 2019 (recommandations BFR en %LOP/mmHg, jamais en unites SKU)",
   },
   {
     id: "uncontrolled_hypertension",
@@ -133,7 +135,7 @@ const RAW_CONTRAINDICATIONS = [
     description:
       "Exclusion par precaution de l'occlusion veineuse, de l'hyperthermie prolongee (sauna > 70 C), de l'hypoxie intermittente et des compressions abdominales.",
     affectedModalities: ["kaatsu", "hyperoxia_ihht", "thermal", "bolster_jacquier"],
-    reference: "ACOG / Patterson et al., 2019",
+    reference: "ACOG ; Patterson et al., 2019 (recommandations BFR en %LOP/mmHg, jamais en unites SKU)",
   },
   {
     id: "severe_varicose_veins",
@@ -142,7 +144,7 @@ const RAW_CONTRAINDICATIONS = [
     description:
       "Risque de stase veineuse aggravée et de thrombophlebite superficielle sous brassard BFR ou forte pression.",
     affectedModalities: ["kaatsu", "compression"],
-    reference: "Patterson et al., 2019",
+    reference: "Patterson et al., 2019 (recommandations BFR en %LOP/mmHg, jamais en unites SKU)",
   },
   {
     id: "lymphedema_av_fistula",
@@ -151,7 +153,7 @@ const RAW_CONTRAINDICATIONS = [
     description:
       "Interdiction absolue de garrot partiel ou de compression externe sur un membre porteur d'un trouble lymphatique ou d'un abord vasculaire.",
     affectedModalities: ["kaatsu", "compression"],
-    reference: "Patterson et al., 2019",
+    reference: "Patterson et al., 2019 (recommandations BFR en %LOP/mmHg, jamais en unites SKU)",
   },
   {
     id: "cardiac_instability",
@@ -237,6 +239,7 @@ const RAW_EQUIPMENT = [
         maxSku: 220,
         maxContinuousMin: 15,
         firstSessionSupervised: true,
+        progressiveStepCalibration: true,
       },
       legs: {
         baseSkuRange: [120, 180],
@@ -244,8 +247,10 @@ const RAW_EQUIPMENT = [
         maxSku: 350,
         maxContinuousMin: 20,
         firstSessionSupervised: true,
+        progressiveStepCalibration: true,
       },
-      reference: "Sato ; KAATSU Global protocols (plafonds SKU) ; Patterson et al., 2019 (principes de securite BFR et durees max)",
+      reference: "Sato ; Nakajima ; Yasuda ; KAATSU Global protocols (unites proprietaires SKU)",
+      bfrReference: "Patterson et al., 2019 (recommandations BFR en %LOP/mmHg et durees max, jamais en unites SKU)",
     },
   },
   {
@@ -253,14 +258,16 @@ const RAW_EQUIPMENT = [
     name: "Boitier KAATSU Cycle 2.0",
     category: "bfr",
     description:
-      "Compresseur portable pilotant des cycles automatiques ON/OFF (30 s compression / 5 s decompression) et la montee progressive Base -> Optimal SKU.",
+      "Compresseur portable pilotant des cycles automatiques ON/OFF (30 s compression / 5 s decompression, <= 8 cycles par serie) et la montee progressive Base -> Optimal SKU.",
     defaultAvailable: true,
     safetyLimits: {
       autoCycleOnSec: 30,
       autoCycleOffSec: 5,
       stepsPerCycleSet: 8,
+      maxCyclesPerSet: 8,
       maxSessionMin: 20,
-      reference: "KAATSU Global Cycle 2.0 Protocol",
+      firstSessionSupervised: true,
+      reference: "Sato ; Nakajima ; Yasuda ; KAATSU Global Cycle 2.0 Protocol",
     },
   },
   {
@@ -287,7 +294,9 @@ const RAW_EQUIPMENT = [
       mandatoryOximeter: true,
       spo2StopThresholdPct: 82,
       spo2StopRangePct: [80, 85],
+      minSingleHypoxiaSec: 180,
       maxSingleHypoxiaSec: 360,
+      hyperoxiaRecoveryRangeSec: [120, 300],
       maskSwitchSec: 15,
       reference: "Serebrovskaya & Xi, 2016 ; Bayer et al., 2017",
     },
@@ -1138,9 +1147,9 @@ const RAW_EXERCISES = [
     conflicts: ["first_kaatsu_unsupervised"],
     svg: "kaatsu_legs_cycle",
     cues: [
-      "Position : haut des cuisses (pli inguinal). Base SKU : 120-180, Optimal SKU <= 300, plafond 350 SKU (guides fabricant Sato ; KAATSU Global protocols) ; max 20 min (principe de securite BFR, Patterson et al., 2019).",
-      "Premiere utilisation supervisee obligatoire. Arret immediat si engourdissement, paresthesie ou paleur.",
-      "Ne jamais depasser 20 min d'occlusion totale ; verifier retour capillaire < 2 s.",
+      "Position : haut des cuisses (pli inguinal). Base SKU : 120-180, Optimal SKU <= 300, plafond 350 SKU (<= 400 SKU max jambes ; Sato ; Nakajima ; Yasuda ; KAATSU Global protocols).",
+      "Premiere utilisation supervisee et calibree obligatoire ; progression par paliers Base -> Optimal SKU. Arret immediat si engourdissement, paresthesie ou paleur.",
+      "Ne jamais depasser 20 min de seance (principes de securite BFR en %LOP/mmHg : Patterson et al., 2019) ; verifier retour capillaire < 2 s.",
     ],
   },
   {
@@ -1165,18 +1174,19 @@ const RAW_EXERCISES = [
     conflicts: ["first_kaatsu_unsupervised"],
     svg: "kaatsu_arms_cycle",
     cues: [
-      "Position : tiers proximal du bras (sous le deltoide). Base SKU : 80-120, Optimal SKU <= 200, plafond 220 SKU (guides fabricant Sato ; KAATSU Global protocols) ; max 15 min (principe de securite BFR, Patterson et al., 2019).",
-      "Premiere utilisation supervisee obligatoire ; peau doit rester rosee (jamais cyanosée).",
+      "Position : tiers proximal du bras (sous le deltoide). Base SKU : 80-120, Optimal SKU <= 200, plafond 220 SKU (<= 250 SKU max bras ; Sato ; Nakajima ; Yasuda ; KAATSU Global protocols).",
+      "Premiere utilisation supervisee et calibree obligatoire ; progression par paliers Base -> Optimal SKU. La peau doit rester rosee (jamais cyanosee).",
+      "Ne jamais depasser 15 min de seance (principes de securite BFR en %LOP/mmHg : Patterson et al., 2019) ; verifier retour capillaire < 2 s.",
     ],
   },
   {
     id: "kaatsu_cycle_legs_recovery_soft",
-    name: "KAATSU recuperation vasculaire douce — jambes (30s ON / 30s OFF)",
+    name: "KAATSU recuperation vasculaire douce — jambes (Cycle 2.0 : 30s ON / 5s OFF)",
     family: "kaatsu",
     equipment: ["kaatsu_bands", "kaatsu_cycle_20"],
     zones: ["legs", "vascular_lower"],
-    durationSec: sumPhasesSec(buildKaatsuCyclePhases("jambes", 30, 30, 6, "Basse 140-180 SKU")),
-    phases: buildKaatsuCyclePhases("jambes", 30, 30, 6, "Basse 140-180 SKU"),
+    durationSec: sumPhasesSec(buildKaatsuCyclePhases("jambes", 30, 5, 6, "Base 120 -> Doux 140-180 SKU")),
+    phases: buildKaatsuCyclePhases("jambes", 30, 5, 6, "Base 120 -> Doux 140-180 SKU"),
     intensity: "very_low",
     contraindications: [
       "tvp_history",
@@ -1191,17 +1201,18 @@ const RAW_EXERCISES = [
     conflicts: ["first_kaatsu_unsupervised"],
     svg: "kaatsu_legs_soft",
     cues: [
-      "Pression basse (140-180 SKU) en position assise ou allongee pour favoriser le flush endotheline/NO (Horiuchi & Okita, 2012).",
+      "Pression basse par paliers (Base 120 -> 140-180 SKU, <= 400 SKU max jambes ; Sato ; Nakajima ; Yasuda ; KAATSU Global protocols) en Cycle 2.0 (30 s ON / 5 s OFF) pour favoriser le flush endotheline/NO (Horiuchi & Okita, 2012).",
+      "Premiere utilisation supervisee et calibree obligatoire ; verifier retour capillaire < 2 s.",
     ],
   },
   {
     id: "kaatsu_cycle_arms_recovery_soft",
-    name: "KAATSU recuperation vasculaire douce — bras (30s ON / 30s OFF)",
+    name: "KAATSU recuperation vasculaire douce — bras (Cycle 2.0 : 30s ON / 5s OFF)",
     family: "kaatsu",
     equipment: ["kaatsu_bands", "kaatsu_cycle_20"],
     zones: ["arms", "vascular_upper"],
-    durationSec: sumPhasesSec(buildKaatsuCyclePhases("bras", 30, 30, 6, "Basse 80-120 SKU")),
-    phases: buildKaatsuCyclePhases("bras", 30, 30, 6, "Basse 80-120 SKU"),
+    durationSec: sumPhasesSec(buildKaatsuCyclePhases("bras", 30, 5, 6, "Base 80 -> Doux 90-120 SKU")),
+    phases: buildKaatsuCyclePhases("bras", 30, 5, 6, "Base 80 -> Doux 90-120 SKU"),
     intensity: "very_low",
     contraindications: [
       "tvp_history",
@@ -1216,7 +1227,8 @@ const RAW_EXERCISES = [
     conflicts: ["first_kaatsu_unsupervised"],
     svg: "kaatsu_arms_soft",
     cues: [
-      "Ideal apres seance haut du corps pour stimuler le retour veineux sans contrainte mecanique.",
+      "Pression basse par paliers (Base 80 -> 90-120 SKU, <= 250 SKU max bras ; Sato ; Nakajima ; Yasuda ; KAATSU Global protocols) en Cycle 2.0 (30 s ON / 5 s OFF) pour stimuler le retour veineux sans contrainte mecanique.",
+      "Premiere utilisation supervisee et calibree obligatoire ; verifier retour capillaire < 2 s.",
     ],
   },
   {
@@ -1225,12 +1237,17 @@ const RAW_EXERCISES = [
     family: "kaatsu",
     equipment: ["kaatsu_bands", "kaatsu_cycle_20"],
     zones: ["legs", "cardiovascular", "systemic"],
-    durationSec: 420,
-    phases: [
-      { label: "Pose bandes jambes (Base 120-160 SKU, Cycle 2.0 160-220 SKU)", sec: 45 },
-      { label: "Marche lente plate (3.5-4.5 km/h) sous cycles auto 30s ON / 5s OFF", sec: 345 },
-      { label: "Arret marche, retrait bandes & controle pouls pedieux", sec: 30 },
-    ],
+    durationSec: sumPhasesSec(
+      buildKaatsuCyclePhases("jambes", 30, 5, 8, "Base 120-160 -> Optimal 160-220 SKU", "Marche lente plate 3.5-4.5 km/h"),
+    ),
+    phases: buildKaatsuCyclePhases(
+      "jambes",
+      30,
+      5,
+      8,
+      "Base 120-160 -> Optimal 160-220 SKU",
+      "Marche lente plate 3.5-4.5 km/h",
+    ),
     intensity: "low",
     contraindications: [
       "tvp_history",
@@ -1245,8 +1262,9 @@ const RAW_EXERCISES = [
     conflicts: ["first_kaatsu_unsupervised", "high_fatigue_cns"],
     svg: "kaatsu_walk",
     cues: [
-      "Stimule la reponse hormonale et capillaire sans dommage musculaire (Abe et al., 2006 ; Patterson et al., 2019).",
-      "Duree stricte <= 10-15 min en marche ; stopper si douleur crurale inhabituelle.",
+      "Marche sous Cycle 2.0 (30 s ON / 5 s OFF, <= 8 cycles/serie ; paliers Base 120-160 -> Optimal 160-220 SKU, <= 400 SKU max jambes ; Sato ; Nakajima ; Yasuda ; KAATSU Global protocols).",
+      "Premiere utilisation supervisee et calibree obligatoire ; reponse hormonale/capillaire sans dommage musculaire (Abe et al., 2006 ; principes generaux BFR en %LOP/mmHg : Patterson et al., 2019).",
+      "Duree stricte <= 10-15 min en marche ; stopper si douleur crurale inhabituelle et controler le pouls pedieux.",
     ],
   },
   {
@@ -1255,12 +1273,17 @@ const RAW_EXERCISES = [
     family: "kaatsu",
     equipment: ["kaatsu_bands", "kaatsu_cycle_20"],
     zones: ["ankle", "calves", "legs"],
-    durationSec: 360,
-    phases: [
-      { label: "Pose bandes cuisses (140-200 SKU)", sec: 45 },
-      { label: "Pompes de cheville & flexions plantaires douces en Cycle 2.0", sec: 285 },
-      { label: "Retrait bandes & controle retour veineux", sec: 30 },
-    ],
+    durationSec: sumPhasesSec(
+      buildKaatsuCyclePhases("jambes", 30, 5, 8, "Base 120 -> Optimal 140-200 SKU", "Pompes cheville & flexions plantaires"),
+    ),
+    phases: buildKaatsuCyclePhases(
+      "jambes",
+      30,
+      5,
+      8,
+      "Base 120 -> Optimal 140-200 SKU",
+      "Pompes cheville & flexions plantaires",
+    ),
     intensity: "low",
     contraindications: [
       "tvp_history",
@@ -1275,7 +1298,8 @@ const RAW_EXERCISES = [
     conflicts: ["first_kaatsu_unsupervised"],
     svg: "kaatsu_ankle",
     cues: [
-      "Contractions lentes sans charge externe pour accelerer la clairance locale.",
+      "Contractions lentes sans charge externe en Cycle 2.0 (30 s ON / 5 s OFF, <= 8 cycles/serie ; paliers Base 120 -> 140-200 SKU, <= 400 SKU max jambes ; Sato ; Nakajima ; Yasuda ; KAATSU Global protocols).",
+      "Premiere utilisation supervisee et calibree obligatoire ; verifier retour capillaire < 2 s.",
     ],
   },
 
@@ -1323,8 +1347,8 @@ const RAW_EXERCISES = [
     conflicts: ["missing_oximeter"],
     svg: "ihht_gentle",
     cues: [
-      "Seuil SpO2 protecteur remonte a 85 % pour limiter le stress sympatique en periode de HRV basse (Bayer et al., 2017).",
-      "Respiration nasale calme durant chaque bascule de masque.",
+      "Seuil SpO2 protecteur remonte a 85 % (>= plancher absolu 80 %) pour limiter le stress sympathique en periode de HRV basse (Bayer et al., 2017).",
+      "Respiration nasale calme durant chaque bascule de masque (15 s).",
     ],
   },
   {
@@ -1346,7 +1370,7 @@ const RAW_EXERCISES = [
     svg: "ihht_calibration",
     cues: [
       "Permet d'observer la cinetique de descente de SpO2 avant un protocole complet.",
-      "Interrompre la phase hypoxique des SpO2 <= 84 % ou sensation de vertige.",
+      "Interrompre la phase hypoxique des SpO2 <= 84 % (plancher absolu <= 80 %) ou sensation de vertige.",
     ],
   },
   {
@@ -1758,7 +1782,7 @@ const RAW_PROTOCOLS = [
     id: "post_muscu_sans_froid",
     name: "Post-musculation (sans froid)",
     objective: "Preserve la signalisation anabolique (mTORC1) et la synthese proteique tout en levant les tensions rachidiennes et fasciales.",
-    reference: "Roberts et al., 2015 ; Figueiredo et al., 2016 ; Patterson et al., 2019",
+    reference: "Roberts et al., 2015 ; Figueiredo et al., 2016 ; Patterson et al., 2019 (principes BFR en %LOP/mmHg)",
     targetStates: ["post_strength", "hypertrophy_focus"],
     forbiddenConflicts: ["strength_lt_4h"],
     exerciseIds: [
@@ -1786,7 +1810,7 @@ const RAW_PROTOCOLS = [
     id: "repos_actif",
     name: "Journee de repos actif",
     objective: "Stimule la perfusion microvasculaire, la mobilite articulaire et l'adaptation mitochondriale sans charge mecanique.",
-    reference: "Kellmann et al., 2018 ; Patterson et al., 2019 ; Serebrovskaya & Xi, 2016",
+    reference: "Kellmann et al., 2018 ; Patterson et al., 2019 (principes BFR en %LOP/mmHg) ; Serebrovskaya & Xi, 2016",
     targetStates: ["rest_day", "moderate_fatigue"],
     forbiddenConflicts: [],
     exerciseIds: [

@@ -17,6 +17,7 @@ const PRECACHE_ASSETS = [
   "./geminiClient.js",
   "./fallbackGenerator.js",
   "./timer.js",
+  "./bleOximeter.js",
   "./catalog.js",
   "./vault.js",
   "./outbox.js",

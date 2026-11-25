@@ -13,6 +13,7 @@ import {
   PROTOCOLS,
   PROTOCOLS_BY_ID,
 } from "./catalog.js";
+import { createBleOximeter, isWebBluetoothSupported } from "./bleOximeter.js";
 import { createDriveSync } from "./driveSync.js";
 import {
   buildSession,
@@ -91,6 +92,7 @@ const state = {
   recoveryScore: null,
   recommendedSession: null,
   liveSpo2StreamPct: null,
+  lastSpo2TimestampMs: null,
   lastSummary: null,
   timerMuted: false,
   timerVibrate: true,
@@ -98,6 +100,8 @@ const state = {
 
 /** @type {MultiPhaseTimer | null} */
 let timer = null;
+/** @type {ReturnType<typeof createBleOximeter> | null} */
+let bleOximeter = null;
 let toastTimerId = 0;
 
 /**
@@ -228,7 +232,13 @@ function normalizeCatalogData() {
         lowerTag.includes("hyperox");
       const phases = normalizePhasesArray(ex.phases, ex.durationSec).map((ph) => ({
         ...ph,
-        meta: { ...(ph.meta ?? {}), exerciseId: id, family, isIhht },
+        meta: {
+          ...(ph.meta ?? {}),
+          exerciseId: id,
+          family,
+          isIhht,
+          isHypoxia: computePhaseIsHypoxia(ph, isIhht),
+        },
       }));
       const durationSec =
         Number(ex.durationSec) > 0
@@ -322,6 +332,21 @@ function normalizeCatalogData() {
       }
 
       const lowerTag = `${id} ${name} ${p.family ?? ""}`.toLowerCase();
+      const protoIsIhht =
+        lowerTag.includes("ihht") ||
+        lowerTag.includes("hypox") ||
+        resolvedExercises.some((ex) => ex.isIhht);
+      if (Array.isArray(p.phases) && p.phases.length > 0 && protoIsIhht) {
+        phases = phases.map((ph) => ({
+          ...ph,
+          meta: {
+            ...(ph.meta ?? {}),
+            isIhht: true,
+            isHypoxia: computePhaseIsHypoxia(ph, true),
+          },
+        }));
+      }
+
       return {
         ...p,
         id,
@@ -335,10 +360,7 @@ function normalizeCatalogData() {
         isKaatsu:
           lowerTag.includes("kaatsu") ||
           resolvedExercises.some((ex) => ex.isKaatsu),
-        isIhht:
-          lowerTag.includes("ihht") ||
-          lowerTag.includes("hypox") ||
-          resolvedExercises.some((ex) => ex.isIhht),
+        isIhht: protoIsIhht,
         isSauna:
           lowerTag.includes("sauna") ||
           resolvedExercises.some((ex) => ex.isSauna),
@@ -353,6 +375,24 @@ function normalizeCatalogData() {
   }
 }
 
+/**
+ * Détermine si une phase IHHT correspond effectivement à une exposition hypoxique
+ * (exclut les phases de bascule de masque et d'hyperoxie).
+ * @param {Record<string, any>} phase
+ * @param {boolean} isIhht
+ * @returns {boolean}
+ */
+function computePhaseIsHypoxia(phase, isIhht) {
+  if (typeof phase?.meta?.isHypoxia === "boolean") {
+    return phase.meta.isHypoxia;
+  }
+  if (!isIhht) {
+    return false;
+  }
+  const label = String(phase?.label ?? "");
+  return /hypox/i.test(label) && !/bascule/i.test(label);
+}
+
 function normalizePhasesArray(phases, fallbackDurationSec) {
   if (Array.isArray(phases) && phases.length > 0) {
     return phases
@@ -362,6 +402,7 @@ function normalizePhasesArray(phases, fallbackDurationSec) {
         sec: Math.max(1, Math.round(Number(ph.sec) || 30)),
         ...(ph.repeat ? { repeat: Math.max(1, Math.round(Number(ph.repeat))) } : {}),
         ...(Array.isArray(ph.phases) ? { phases: ph.phases } : {}),
+        ...(ph.meta && typeof ph.meta === "object" ? { meta: { ...ph.meta } } : {}),
       }));
   }
   const sec = Math.max(10, Math.round(Number(fallbackDurationSec) || 60));
@@ -612,6 +653,111 @@ function setupTabsNavigation() {
 /* =========================================================================
    MINUTEUR MULTI-PHASES
    ========================================================================= */
+/**
+ * Affiche ou masque la bannière d'alerte de fraîcheur SpO₂ (> 60 s en hypoxie).
+ * @param {boolean} visible
+ * @param {string} [message=""]
+ */
+function setSpo2StaleBanner(visible, message = "") {
+  if (dom.spo2StaleAlert) {
+    dom.spo2StaleAlert.textContent = visible ? message : "";
+    dom.spo2StaleAlert.hidden = !visible;
+  }
+  dom.spo2GuardBox?.classList.toggle("is-stale", visible);
+  if (visible) {
+    dom.spo2GuardBox?.classList.add("is-alert");
+  }
+}
+
+/**
+ * Enregistre une mesure SpO₂ en direct (saisie manuelle, événement ou BLE),
+ * met à jour l'horodatage et réarme le watchdog du minuteur.
+ * @param {unknown} rawValue
+ * @param {number} [timestampMs=Date.now()]
+ * @param {"input" | "event" | "ble"} [source="event"]
+ */
+function recordLiveSpo2(rawValue, timestampMs = Date.now(), source = "event") {
+  const val = Number(rawValue);
+  if (!Number.isFinite(val)) {
+    state.liveSpo2StreamPct = null;
+    return;
+  }
+  const ts = Number.isFinite(Number(timestampMs)) ? Number(timestampMs) : Date.now();
+  state.liveSpo2StreamPct = val;
+  state.lastSpo2TimestampMs = ts;
+
+  if (dom.liveSpo2Input && source !== "input") {
+    dom.liveSpo2Input.value = String(val);
+  }
+
+  timer?.recordSpo2Reading(val, ts);
+
+  if (timer?.status === "paused" && timer?.pauseReason === "spo2_stale") {
+    const threshold = Math.max(80, Number(state.settings.spo2ThresholdPct) || 85);
+    if (val >= threshold) {
+      setSpo2StaleBanner(
+        true,
+        `Nouvelle SpO₂ (${val} % ≥ ${threshold} %) enregistrée — cliquez sur « Reprendre » pour continuer.`
+      );
+      dom.spo2GuardBox?.classList.remove("is-alert");
+    } else {
+      setSpo2StaleBanner(
+        true,
+        `SpO₂ insuffisante (${val} % < seuil ${threshold} %) — reprise bloquée.`
+      );
+    }
+  }
+}
+
+function initBleOximeter() {
+  bleOximeter = createBleOximeter({
+    onReading: ({ spo2, hr, timestampMs }) => {
+      if (typeof spo2 === "number" && Number.isFinite(spo2)) {
+        window.dispatchEvent(
+          new CustomEvent("webrecovery:spo2", {
+            detail: { spo2, hr, source: "ble", timestampMs },
+          })
+        );
+      }
+      if (dom.bleOximeterStatus) {
+        const parts = [];
+        if (typeof spo2 === "number" && Number.isFinite(spo2)) parts.push(`SpO₂ ${spo2}%`);
+        if (typeof hr === "number" && Number.isFinite(hr)) parts.push(`FC ${hr} bpm`);
+        if (parts.length > 0) {
+          dom.bleOximeterStatus.textContent = `BLE : ${parts.join(" · ")}`;
+        }
+      }
+    },
+    onStatusChange: ({ state: bleState, message }) => {
+      if (dom.bleOximeterStatus) {
+        dom.bleOximeterStatus.textContent =
+          bleState === "connected" ? message : bleState === "unsupported" ? "BLE indisponible (saisie manuelle)" : "";
+        dom.bleOximeterStatus.classList.toggle("is-connected", bleState === "connected");
+        dom.bleOximeterStatus.classList.toggle("is-unsupported", bleState === "unsupported");
+      }
+      if (dom.bleOximeterBtn) {
+        dom.bleOximeterBtn.textContent =
+          bleState === "connected"
+            ? "Déconnecter oxymètre BLE"
+            : bleState === "connecting"
+              ? "Connexion BLE..."
+              : "Connecter oxymètre BLE";
+        dom.bleOximeterBtn.disabled = bleState === "connecting";
+      }
+    },
+    onError: ({ message }) => {
+      if (message) {
+        showToast(message, "info");
+      }
+    },
+  });
+
+  if (!isWebBluetoothSupported() && dom.bleOximeterStatus) {
+    dom.bleOximeterStatus.textContent = "BLE indisponible (saisie manuelle active)";
+    dom.bleOximeterStatus.classList.add("is-unsupported");
+  }
+}
+
 function initTimer() {
   if (dom.timerRingProgress) {
     dom.timerRingProgress.style.strokeDasharray = `${RING_CIRCUMFERENCE.toFixed(2)}`;
@@ -620,6 +766,8 @@ function initTimer() {
 
   timer = new MultiPhaseTimer({
     tickIntervalMs: 250,
+    spo2MaxAgeMs: 60_000,
+    spo2ThresholdPct: Math.max(80, Number(state.settings.spo2ThresholdPct) || 85),
     muted: state.timerMuted,
     vibrateEnabled: state.timerVibrate,
     onSafetyCheck: (snapshot) => {
@@ -654,15 +802,30 @@ function initTimer() {
       }
       return true;
     },
+    onSafetyAlert: (alert) => {
+      const threshold = Math.max(80, Number(state.settings.spo2ThresholdPct) || 85);
+      const msg =
+        alert?.reason ||
+        `PAUSE SÉCURITÉ : aucune mesure SpO₂ reçue depuis > 60 s. Saisissez une SpO₂ ≥ ${threshold} % pour reprendre.`;
+      setSpo2StaleBanner(true, `${msg} Saisissez une SpO₂ ≥ ${threshold} % pour reprendre.`);
+      showToast(msg, "error");
+      updateTimerControls();
+    },
     onPhase: (info) => {
-      const isIhhtPhase = Boolean(info?.step?.meta?.isIhht);
+      const isIhhtPhase = Boolean(info?.meta?.isIhht ?? info?.step?.meta?.isIhht);
       dom.spo2GuardBox?.classList.toggle("is-active", isIhhtPhase);
       renderPhaseQueue();
     },
     onTick: (snapshot) => {
       renderTimerSnapshot(snapshot);
     },
-    onStateChange: () => {
+    onStateChange: (stateInfo) => {
+      if (stateInfo?.status === "running" || stateInfo?.status === "idle") {
+        setSpo2StaleBanner(false);
+        if (stateInfo?.status === "idle") {
+          dom.spo2GuardBox?.classList.remove("is-alert");
+        }
+      }
       updateTimerControls();
     },
     onDone: (summary) => {
@@ -718,6 +881,7 @@ function loadIntoTimer(sessionObj, autoSwitchToday = true) {
   };
 
   timer?.load(sessionObj.phases);
+  setSpo2StaleBanner(false);
   dom.spo2GuardBox?.classList.remove("is-alert");
   if (dom.timerTitle) dom.timerTitle.textContent = sessionObj.name;
   if (dom.timerSubtitle) {
@@ -742,9 +906,11 @@ function renderTimerSnapshot(snapshot) {
     dom.timerPhaseLabel.textContent =
       snapshot.status === "interrupted"
         ? "ARRÊT SÉCURITÉ"
-        : snapshot.status === "done"
-          ? "Séance terminée"
-          : snapshot.phaseLabel || "En attente";
+        : snapshot.status === "paused" && snapshot.pauseReason === "spo2_stale"
+          ? "PAUSE SÉCURITÉ (SpO₂ > 60 s)"
+          : snapshot.status === "done"
+            ? "Séance terminée"
+            : snapshot.phaseLabel || "En attente";
   }
   if (dom.timerStepMeta) {
     const stepNum = snapshot.totalSteps > 0 ? snapshot.stepIndex + 1 : 0;
@@ -760,10 +926,14 @@ function renderTimerSnapshot(snapshot) {
     dom.timerRingProgress.classList.toggle("is-done", snapshot.status === "done");
   }
   if (dom.timerStatusBadge) {
+    const isSpo2Stale =
+      snapshot.status === "paused" && snapshot.pauseReason === "spo2_stale";
     const labels = {
       idle: ["Prêt", "badge-cyan"],
       running: ["En cours", "badge-emerald"],
-      paused: ["En pause", "badge-amber"],
+      paused: isSpo2Stale
+        ? ["Pause SpO₂", "badge-coral"]
+        : ["En pause", "badge-amber"],
       done: ["Terminé", "badge-emerald"],
       interrupted: ["Interrompu", "badge-coral"],
     };
@@ -950,6 +1120,7 @@ function buildSessionTimerPayload(session) {
           exerciseId: ex.id,
           family: ex.family,
           isIhht: isIhhtItem,
+          isHypoxia: computePhaseIsHypoxia(ph, isIhhtItem),
         },
       });
     }
@@ -1593,6 +1764,7 @@ function saveSettingsFromForm() {
     95,
     85
   );
+  timer?.setSpo2ThresholdPct(state.settings.spo2ThresholdPct);
   saveLocalSettings();
 
   const rawDriveUrl = dom.vaultDriveUrl?.value?.trim() || "";
@@ -1665,7 +1837,14 @@ function bindEvents() {
   });
 
   dom.timerPauseBtn?.addEventListener("click", () => {
-    timer?.togglePause();
+    const ok = timer?.togglePause();
+    if (!ok && timer?.status === "paused" && timer?.pauseReason === "spo2_stale") {
+      const threshold = Math.max(80, Number(state.settings.spo2ThresholdPct) || 85);
+      showToast(
+        `Reprise bloquée : saisissez une nouvelle SpO₂ ≥ ${threshold} % pour relancer la phase hypoxique.`,
+        "error"
+      );
+    }
   });
 
   dom.timerSkipBtn?.addEventListener("click", () => {
@@ -1737,15 +1916,33 @@ function bindEvents() {
   });
 
   dom.liveSpo2Input?.addEventListener("input", () => {
-    const val = Number(dom.liveSpo2Input?.value);
-    state.liveSpo2StreamPct = Number.isFinite(val) ? val : null;
+    const rawStr = dom.liveSpo2Input?.value?.trim() ?? "";
+    if (rawStr === "") {
+      state.liveSpo2StreamPct = null;
+      return;
+    }
+    recordLiveSpo2(Number(rawStr), Date.now(), "input");
   });
 
   window.addEventListener("webrecovery:spo2", (event) => {
     const val = Number(event?.detail?.spo2 ?? event?.detail);
+    const ts = Number(event?.detail?.timestampMs);
     if (Number.isFinite(val)) {
-      state.liveSpo2StreamPct = val;
-      if (dom.liveSpo2Input) dom.liveSpo2Input.value = String(val);
+      recordLiveSpo2(val, Number.isFinite(ts) ? ts : Date.now(), "event");
+    }
+  });
+
+  dom.bleOximeterBtn?.addEventListener("click", async () => {
+    if (!bleOximeter) {
+      initBleOximeter();
+    }
+    if (bleOximeter?.getStatus() === "connected") {
+      bleOximeter.disconnect();
+      return;
+    }
+    const res = await bleOximeter?.connect();
+    if (res && !res.ok && res.reason === "unsupported") {
+      showToast(res.message, "info");
     }
   });
 
@@ -1963,7 +2160,10 @@ function cacheDomReferences() {
   dom.timerMuteBtn = document.getElementById("timer-mute-btn");
   dom.timerVibrateBtn = document.getElementById("timer-vibrate-btn");
   dom.spo2GuardBox = document.getElementById("spo2-guard-box");
+  dom.spo2StaleAlert = document.getElementById("spo2-stale-alert");
   dom.liveSpo2Input = document.getElementById("live-spo2-input");
+  dom.bleOximeterBtn = document.getElementById("ble-oximeter-btn");
+  dom.bleOximeterStatus = document.getElementById("ble-oximeter-status");
   dom.timerPhaseQueue = document.getElementById("timer-phase-queue");
 
   dom.sessionLogForm = document.getElementById("session-log-form");
@@ -2035,6 +2235,7 @@ function bootstrap() {
   setupTabsNavigation();
   normalizeCatalogData();
   initTimer();
+  initBleOximeter();
   populateCatalogFamilyFilter();
   populateSettingsForm();
   renderTodayKpis();

@@ -223,3 +223,153 @@ test("regles de securite encodees : KAATSU, IHHT, froid post-muscu, sauna, webbr
     );
   }
 });
+
+test("KAATSU : plafonds SKU <= 250 (bras) / <= 400 (jambes) et aucune association Patterson 2019 <-> SKU", () => {
+  const kaatsuBands = EQUIPMENT.find((e) => e.id === "kaatsu_bands");
+  assert.ok(kaatsuBands);
+  assert.ok(kaatsuBands.safetyLimits.arms.maxSku <= 250);
+  assert.ok(kaatsuBands.safetyLimits.arms.optimalSkuRange[1] <= 250);
+  assert.equal(kaatsuBands.safetyLimits.arms.firstSessionSupervised, true);
+  assert.ok(kaatsuBands.safetyLimits.legs.maxSku <= 400);
+  assert.ok(kaatsuBands.safetyLimits.legs.optimalSkuRange[1] <= 400);
+  assert.equal(kaatsuBands.safetyLimits.legs.firstSessionSupervised, true);
+
+  // Aucune association Patterson 2019 aux unites SKU dans EQUIPMENT ou CONTRAINDICATIONS
+  assert.equal(/patterson/i.test(kaatsuBands.safetyLimits.reference), false);
+  const kaatsuBox = EQUIPMENT.find((e) => e.id === "kaatsu_cycle_20");
+  assert.equal(/patterson/i.test(kaatsuBox.safetyLimits.reference), false);
+
+  for (const ci of CONTRAINDICATIONS) {
+    if (/patterson/i.test(ci.reference ?? "")) {
+      assert.ok(
+        /%LOP|mmHg/i.test(ci.reference) && /jamais en unites SKU|distinctes des unites/i.test(ci.reference),
+        `La citation Patterson dans CONTRAINDICATIONS.${ci.id} doit preciser %LOP/mmHg et exclure SKU`,
+      );
+    }
+  }
+  for (const eq of EQUIPMENT) {
+    const refs = [eq.safetyLimits?.reference, eq.safetyLimits?.bfrReference].filter(Boolean);
+    for (const ref of refs) {
+      if (/patterson/i.test(ref)) {
+        assert.ok(
+          /%LOP|mmHg/i.test(ref) && /jamais en unites SKU/i.test(ref),
+          `La citation Patterson dans EQUIPMENT.${eq.id} doit preciser %LOP/mmHg et exclure SKU`,
+        );
+      }
+    }
+  }
+
+  const kaatsuExs = EXERCISES.filter((e) => e.family === "kaatsu");
+  for (const ex of kaatsuExs) {
+    assert.ok(ex.conflicts.includes("first_kaatsu_unsupervised"), `${ex.id} doit exiger supervision initiale`);
+    const isArms = ex.id.includes("arms") || ex.zones.includes("arms") || ex.zones.includes("biceps");
+    const limit = isArms ? 250 : 400;
+    const texts = [ex.name, ...ex.phases.map((p) => p.label), ...ex.cues];
+    for (const txt of texts) {
+      for (const match of txt.matchAll(/(\d+)\s*SKU/gi)) {
+        const val = Number.parseInt(match[1], 10);
+        assert.ok(
+          val <= limit,
+          `Valeur ${val} SKU depasse le plafond ${limit} SKU dans ${ex.id}: "${txt}"`,
+        );
+      }
+      if (/patterson/i.test(txt)) {
+        assert.ok(
+          /%LOP|mmHg/i.test(txt),
+          `Citation Patterson sans distinction %LOP/mmHg dans ${ex.id}: "${txt}"`,
+        );
+        assert.equal(
+          /\d+\s*SKU/i.test(txt),
+          false,
+          `Association numerique SKU + Patterson interdite dans ${ex.id}: "${txt}"`,
+        );
+      }
+    }
+  }
+});
+
+test("KAATSU Cycle 2.0 : cinematique stricte 30 s ON / 5 s OFF et <= 8 cycles par serie", () => {
+  const kaatsuBox = EQUIPMENT.find((e) => e.id === "kaatsu_cycle_20");
+  assert.equal(kaatsuBox.safetyLimits.autoCycleOnSec, 30);
+  assert.equal(kaatsuBox.safetyLimits.autoCycleOffSec, 5);
+  assert.ok(kaatsuBox.safetyLimits.stepsPerCycleSet <= 8);
+
+  const cycleExs = EXERCISES.filter(
+    (e) => e.family === "kaatsu" || e.equipment.includes("kaatsu_cycle_20"),
+  );
+  assert.equal(cycleExs.length, 6);
+
+  for (const ex of cycleExs) {
+    const onPhases = ex.phases.filter((p) => /Cycle\s+\d+\/\d+\s+ON/i.test(p.label));
+    const offPhases = ex.phases.filter((p) => /Cycle\s+\d+\/\d+\s+OFF/i.test(p.label));
+    assert.ok(
+      onPhases.length >= 1 && onPhases.length <= 8,
+      `${ex.id} doit avoir entre 1 et 8 cycles par serie (trouve ${onPhases.length})`,
+    );
+    assert.equal(
+      onPhases.length,
+      offPhases.length,
+      `${ex.id} doit avoir autant de phases ON que OFF`,
+    );
+    for (const p of onPhases) {
+      assert.equal(p.sec, 30, `${ex.id} phase ON doit durer 30 s (${p.label})`);
+    }
+    for (const p of offPhases) {
+      assert.equal(p.sec, 5, `${ex.id} phase OFF doit durer 5 s (${p.label})`);
+    }
+  }
+});
+
+test("IHHT : presence systematique de 15 s de bascule masque entre hypoxie et hyperoxie + bornes SpO2", () => {
+  const hypoxiaGen = EQUIPMENT.find((e) => e.id === "hypoxia_gen");
+  const oximeter = EQUIPMENT.find((e) => e.id === "oximeter");
+  assert.equal(hypoxiaGen.safetyLimits.maskSwitchSec, 15);
+  assert.ok(hypoxiaGen.safetyLimits.spo2StopThresholdPct >= 80);
+  assert.equal(oximeter.safetyLimits.hardStopThresholdPct, 80);
+
+  const ihhtExs = EXERCISES.filter(
+    (e) => e.equipment.includes("hypoxia_gen") && e.equipment.includes("hyperoxia_gen"),
+  );
+  assert.ok(ihhtExs.length >= 3);
+
+  for (const ex of ihhtExs) {
+    for (let i = 0; i < ex.phases.length; i++) {
+      const p = ex.phases[i];
+      if (/-\s*Hypoxie\b/i.test(p.label)) {
+        assert.ok(p.sec >= 180 && p.sec <= 360, `${ex.id} hypoxie hors [180,360]s: ${p.sec}`);
+        const next = ex.phases[i + 1];
+        assert.ok(next && /bascule/i.test(next.label), `${ex.id} manque bascule apres hypoxie`);
+        assert.equal(next.sec, 15, `${ex.id} bascule doit durer 15 s`);
+      }
+      if (/-\s*Hyperoxie\b/i.test(p.label)) {
+        assert.ok(p.sec >= 120 && p.sec <= 300, `${ex.id} hyperoxie hors [120,300]s: ${p.sec}`);
+        const prev = ex.phases[i - 1];
+        assert.ok(prev && /bascule/i.test(prev.label), `${ex.id} manque bascule avant hyperoxie`);
+        assert.equal(prev.sec, 15, `${ex.id} bascule doit durer 15 s`);
+        const next = ex.phases[i + 1];
+        if (next && /-\s*Hypoxie\b/i.test(ex.phases[i + 2]?.label ?? "")) {
+          assert.ok(/bascule/i.test(next.label) && next.sec === 15);
+        }
+      }
+      for (const m of p.label.matchAll(/SpO2\s*(?:<=|>)\s*(\d+)\s*%/gi)) {
+        assert.ok(Number.parseInt(m[1], 10) >= 80, `${ex.id} seuil SpO2 < 80 %`);
+      }
+    }
+  }
+});
+
+test("coherence globale : 60 exercices, 8 protocoles, 14 materiels, 12 contre-indications sans orphelins", () => {
+  assert.equal(EXERCISES.length, 60);
+  assert.equal(PROTOCOLS.length, 8);
+  assert.equal(EQUIPMENT.length, 14);
+  assert.equal(CONTRAINDICATIONS.length, 12);
+
+  const usedEq = new Set(EXERCISES.flatMap((e) => e.equipment));
+  const usedCi = new Set(EXERCISES.flatMap((e) => e.contraindications));
+  for (const eq of EQUIPMENT) {
+    assert.ok(usedEq.has(eq.id), `Materiel orphelin: ${eq.id}`);
+  }
+  for (const ci of CONTRAINDICATIONS) {
+    assert.ok(usedCi.has(ci.id), `Contre-indication orpheline: ${ci.id}`);
+  }
+});

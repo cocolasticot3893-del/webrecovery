@@ -321,11 +321,12 @@
                   </div>
 
                   <div id="spo2-guard-box" class="spo2-guard-box">
-                    <div>
+                    <div class="spo2-guard-info">
                       <strong>Surveillance SpO₂ en direct (IHHT)</strong>
                       <div class="form-hint">
-                        Vérifiée chaque seconde via <code>onSafetyCheck()</code>.
+                        Vérifiée chaque seconde via <code>onSafetyCheck()</code> · Fraîcheur max 60 s en hypoxie.
                       </div>
+                      <div id="spo2-stale-alert" class="spo2-stale-alert" role="alert" hidden></div>
                     </div>
                     <div class="spo2-input-group">
                       <label for="live-spo2-input" class="form-label">SpO₂ (%) :</label>
@@ -338,6 +339,14 @@
                         step="1"
                         placeholder="ex: 95"
                       />
+                      <button
+                        type="button"
+                        id="ble-oximeter-btn"
+                        class="btn btn-secondary btn-sm"
+                      >
+                        Connecter oxymètre BLE
+                      </button>
+                      <span id="ble-oximeter-status" class="ble-status-text" aria-live="polite"></span>
                     </div>
                   </div>
 

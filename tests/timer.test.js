@@ -4,7 +4,14 @@ import {
   MultiPhaseTimer,
   expandPhases,
   formatDurationSec,
+  isPhaseHypoxic,
 } from "../timer.js";
+import {
+  createBleOximeter,
+  decodeSfloat16,
+  parseHeartRateMeasurement,
+  parsePlxMeasurement,
+} from "../bleOximeter.js";
 
 /**
  * Horloge déterministe injectable simulant `now`, `setInterval` et `clearInterval`.
@@ -301,5 +308,161 @@ describe("MultiPhaseTimer", () => {
     assert.ok(doneSummary);
     assert.equal(doneSummary.interrupted, true);
     assert.equal(doneSummary.reason, "safety_check_error");
+  });
+
+  it("déclenche le watchdog SpO2 après > 60 s en phase hypoxique, bloque resume() et reprend après mesure valide >= seuil", () => {
+    const clock = createFakeClock(2_000_000);
+    const audioCalls = [];
+    const vibrateCalls = [];
+    const alerts = [];
+
+    const timer = new MultiPhaseTimer({
+      clock,
+      tickIntervalMs: 250,
+      spo2MaxAgeMs: 60_000,
+      spo2ThresholdPct: 85,
+      audio: { play: (kind) => audioCalls.push(kind) },
+      vibrate: (pattern) => {
+        vibrateCalls.push(pattern);
+        return true;
+      },
+      wakeLock: null,
+      onSafetyAlert: (alert) => alerts.push(alert),
+    });
+
+    // Enregistre une mesure initiale valide à t = 2_000_000
+    assert.equal(timer.recordSpo2Reading(95), true);
+    assert.equal(timer.lastSpo2Value, 95);
+    assert.equal(timer.lastSpo2TimestampMs, 2_000_000);
+
+    timer.start([
+      { label: "Cycle 1/2 - Hypoxie", sec: 180, meta: { isHypoxia: true, isIhht: true } },
+      { label: "Cycle 1/2 - Hyperoxie", sec: 120, meta: { isHypoxia: false, isIhht: true } },
+    ]);
+
+    // À exactement 60 000 ms, la mesure n'est pas encore > 60 000 ms
+    clock.advanceBy(60_000);
+    assert.equal(timer.status, "running");
+    assert.equal(alerts.length, 0);
+
+    // Dès > 60 000 ms (60 250 ms), le watchdog déclenche alerte + pause spo2_stale
+    clock.advanceBy(1_000);
+    assert.equal(timer.status, "paused");
+    assert.equal(timer.pauseReason, "spo2_stale");
+    assert.equal(clock.activeTimerCount(), 0);
+    assert.equal(alerts.length, 1);
+    assert.equal(alerts[0].code, "spo2_stale");
+    assert.equal(audioCalls.at(-1), "alert");
+    assert.ok(vibrateCalls.length >= 2);
+
+    // Sans nouvelle mesure, resume() est bloqué
+    assert.equal(timer.resume(), false);
+    assert.equal(timer.status, "paused");
+    assert.equal(timer.pauseReason, "spo2_stale");
+
+    // Avec une nouvelle mesure inférieure au seuil (< 85 %), resume() reste bloqué
+    assert.equal(timer.recordSpo2Reading(82), true);
+    assert.equal(timer.resume(), false);
+    assert.equal(timer.status, "paused");
+    assert.equal(timer.pauseReason, "spo2_stale");
+
+    // Avec une nouvelle mesure valide >= seuil (92 >= 85), resume() reprend
+    assert.equal(timer.recordSpo2Reading(92), true);
+    assert.equal(timer.resume(), true);
+    assert.equal(timer.status, "running");
+    assert.equal(timer.pauseReason, "");
+    assert.ok(clock.activeTimerCount() > 0);
+  });
+
+  it("détecte les phases hypoxiques via meta.isIhht + label et épargne les phases non hypoxiques", () => {
+    assert.equal(
+      isPhaseHypoxic({ label: "Cycle 1/3 - Hypoxie", meta: { isIhht: true } }),
+      true
+    );
+    assert.equal(
+      isPhaseHypoxic({
+        label: "Cycle 1/3 - Bascule masque : retirer hypoxie",
+        meta: { isIhht: true, isHypoxia: false },
+      }),
+      false
+    );
+
+    const clock = createFakeClock(3_000_000);
+    const alerts = [];
+    const timer = new MultiPhaseTimer({
+      clock,
+      tickIntervalMs: 250,
+      spo2MaxAgeMs: 60_000,
+      audio: { play: () => {} },
+      vibrate: () => true,
+      wakeLock: null,
+      onSafetyAlert: (a) => alerts.push(a),
+    });
+
+    timer.recordSpo2Reading(98);
+    timer.start([
+      {
+        label: "Cycle 1/1 - Hyperoxie",
+        sec: 90,
+        meta: { isIhht: true, isHypoxia: false },
+      },
+      {
+        label: "Cycle 1/1 - Hypoxie",
+        sec: 120,
+        meta: { isIhht: true },
+      },
+    ]);
+
+    // 70 s en phase hyperoxique sans nouvelle mesure : pas de pause spo2_stale
+    clock.advanceBy(70_000);
+    assert.equal(timer.status, "running");
+    assert.equal(alerts.length, 0);
+
+    // Passage en phase hypoxique à 90 s : la mesure date de 90 s (> 60 s) -> pause immédiate
+    clock.advanceBy(20_500);
+    assert.equal(timer.status, "paused");
+    assert.equal(timer.pauseReason, "spo2_stale");
+    assert.equal(alerts.length, 1);
+  });
+});
+
+describe("bleOximeter (Web Bluetooth optionnel non bloquant)", () => {
+  it("décode IEEE-11073 SFLOAT, PLX 0x2A5F et Heart Rate 0x2A37", () => {
+    // 96 = mantisse 96 (0x060), exposant 0 => 0x0060
+    assert.equal(decodeSfloat16(0x0060), 96);
+    // 97.5 = mantisse 975 (0x3CF), exposant -1 (0xF) => 0xF3CF
+    assert.ok(Math.abs(decodeSfloat16(0xf3cf) - 97.5) < 1e-6);
+
+    // Trame PLX : flags=0x00, SpO2=95 (0x005F LE), PR=64 (0x0040 LE)
+    const plxBuf = new Uint8Array([0x00, 0x5f, 0x00, 0x40, 0x00]);
+    assert.deepEqual(parsePlxMeasurement(plxBuf), { spo2: 95, hr: 64 });
+
+    // Trame HR 0x2A37 : flags=0x00 (uint8), HR=68
+    const hrBuf = new Uint8Array([0x00, 68]);
+    assert.deepEqual(parseHeartRateMeasurement(hrBuf), { hr: 68 });
+  });
+
+  it("gère l'absence de navigator.bluetooth et l'annulation sans erreur bloquante", async () => {
+    const unsupportedClient = createBleOximeter({ navigatorRef: {} });
+    assert.equal(unsupportedClient.isSupported(), false);
+    const resUnsupported = await unsupportedClient.connect();
+    assert.equal(resUnsupported.ok, false);
+    assert.equal(resUnsupported.reason, "unsupported");
+
+    const cancelClient = createBleOximeter({
+      navigatorRef: {
+        bluetooth: {
+          requestDevice: async () => {
+            const err = new Error("User cancelled");
+            err.name = "NotFoundError";
+            throw err;
+          },
+        },
+      },
+    });
+    assert.equal(cancelClient.isSupported(), true);
+    const resCancelled = await cancelClient.connect();
+    assert.equal(resCancelled.ok, false);
+    assert.equal(resCancelled.reason, "cancelled");
   });
 });
