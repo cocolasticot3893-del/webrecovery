@@ -138,7 +138,7 @@ describe("Durcissement statique index.html, sw.js et app.js", () => {
     assert.equal(/\sstyle=/.test(html), false);
 
     const sw = readFileSync(join(ROOT_DIR, "sw.js"), "utf8");
-    assert.match(sw, /const CACHE_NAME = "webrecovery-v2";/);
+    assert.match(sw, /const CACHE_NAME = "webrecovery-v\d+";/);
     for (const iconPath of [
       "./icons/icon-180.png",
       "./icons/icon-192.png",

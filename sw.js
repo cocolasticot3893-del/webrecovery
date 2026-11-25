@@ -5,7 +5,7 @@
  * Network-Only strict sur Intervals.icu, Gemini API et Google Apps Script.
  */
 
-const CACHE_NAME = "webrecovery-v2";
+const CACHE_NAME = "webrecovery-v3";
 
 const PRECACHE_ASSETS = [
   "./",
