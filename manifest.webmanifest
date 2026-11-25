@@ -1,0 +1,20 @@
+{
+  "name": "WebRecovery — Récupération & Bio-Télémétrie",
+  "short_name": "WebRecovery",
+  "description": "Protocoles de récupération (KAATSU/BFR, IHHT, Thermique, Bolster, Auto-massage, Mobilité) avec garde-fous physiologiques et télémétrie Intervals.icu offline-first.",
+  "lang": "fr",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#060d18",
+  "theme_color": "#060d18",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any maskable"
+    }
+  ]
+}

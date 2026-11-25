@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="WebRecovery Logo">
+  <defs>
+    <linearGradient id="wr-grad" x1="15%" y1="10%" x2="85%" y2="90%">
+      <stop offset="0%" stop-color="#06b6d4" />
+      <stop offset="100%" stop-color="#10b981" />
+    </linearGradient>
+    <radialGradient id="wr-halo" cx="50%" cy="50%" r="46%">
+      <stop offset="0%" stop-color="#10b981" stop-opacity="0.24" />
+      <stop offset="65%" stop-color="#06b6d4" stop-opacity="0.08" />
+      <stop offset="100%" stop-color="#060d18" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+
+  <!-- Fond abyssal arrondi compatible icône maskable -->
+  <rect width="128" height="128" rx="24" fill="#060d18" />
+
+  <!-- Halo régénération subtil -->
+  <circle cx="64" cy="64" r="50" fill="url(#wr-halo)" />
+
+  <!-- Anneau de cycle de récupération -->
+  <circle
+    cx="64"
+    cy="64"
+    r="40"
+    fill="none"
+    stroke="rgba(6, 182, 212, 0.22)"
+    stroke-width="6"
+  />
+  <path
+    d="M64 24 A40 40 0 1 1 29.4 84"
+    fill="none"
+    stroke="url(#wr-grad)"
+    stroke-width="6"
+    stroke-linecap="round"
+  />
+
+  <!-- Onde HRV / récupération parasympathique -->
+  <path
+    d="M30 66 H45 L53 48 L62 82 L71 54 L79 66 H98"
+    fill="none"
+    stroke="#f1f5f9"
+    stroke-width="4.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <!-- Point indicateur de régénération -->
+  <circle cx="29.4" cy="84" r="4.5" fill="#10b981" />
+</svg>

@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://intervals.icu https://generativelanguage.googleapis.com https://script.google.com https://script.googleusercontent.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'none'; worker-src 'self';"
+    />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#060d18" />
+    <meta
+      name="description"
+      content="WebRecovery — Protocoles de récupération (KAATSU/BFR, IHHT, Thermique, Bolster, Auto-massage, Mobilité) et télémétrie Intervals.icu offline-first."
+    />
+    <title>WebRecovery — Récupération &amp; Garde-Fous</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+    <link rel="apple-touch-icon" href="./icon.svg" />
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./errorGuard.js" defer></script>
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="topbar-brand">
+        <img
+          src="./icon.svg"
+          alt=""
+          class="brand-icon"
+          width="34"
+          height="34"
+        />
+        <div class="brand-text">
+          <span class="brand-name">WebRecovery</span>
+          <span class="brand-sub">Récupération &amp; Garde-Fous</span>
+        </div>
+      </div>
+
+      <div class="topbar-status" aria-label="État système et synchronisation">
+        <span id="network-badge" class="status-pill is-online" role="status">
+          En ligne
+        </span>
+        <button
+          type="button"
+          id="outbox-flush-btn"
+          class="status-pill status-pill-btn outbox-pill"
+          title="Synchroniser la file d'attente hors-ligne"
+          aria-live="polite"
+        >
+          Outbox : <strong id="outbox-count">0</strong>
+        </button>
+        <button
+          type="button"
+          id="safety-status-pill"
+          class="status-pill status-pill-btn"
+          title="Consulter le questionnaire de sécurité dans Réglages"
+        >
+          Sécurité : OK
+        </button>
+        <span id="intervals-status-pill" class="status-pill is-muted">
+          Intervals : —
+        </span>
+      </div>
+    </header>
+
+    <div
+      id="global-error-banner"
+      class="error-banner"
+      role="alert"
+      hidden
+    ></div>
+
+    <main class="app-shell">
+      <div
+        id="main-tablist"
+        class="tabs-bar"
+        role="tablist"
+        focusgroup="tablist nomemory"
+        aria-label="Navigation WebRecovery"
+      >
+        <button
+          type="button"
+          role="tab"
+          id="tab-today"
+          data-tab="today"
+          aria-selected="true"
+          focusgroupstart
+          class="nav-tab"
+        >
+          Aujourd'hui
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id="tab-catalog"
+          data-tab="catalog"
+          aria-selected="false"
+          tabindex="-1"
+          class="nav-tab"
+        >
+          Catalogue
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id="tab-protocols"
+          data-tab="protocols"
+          aria-selected="false"
+          tabindex="-1"
+          class="nav-tab"
+        >
+          Protocoles
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id="tab-equipment"
+          data-tab="equipment"
+          aria-selected="false"
+          tabindex="-1"
+          class="nav-tab"
+        >
+          Matériel
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id="tab-history"
+          data-tab="history"
+          aria-selected="false"
+          tabindex="-1"
+          class="nav-tab"
+        >
+          Historique
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id="tab-settings"
+          data-tab="settings"
+          aria-selected="false"
+          tabindex="-1"
+          class="nav-tab"
+        >
+          Réglages
+        </button>
+      </div>
+
+      <div class="panels-stack">
+        <!-- ===============================================================
+             ONGLET 1 : AUJOURD'HUI & MINUTEUR MULTI-PHASES
+             =============================================================== -->
+        <section
+          id="panel-today"
+          class="tab-panel"
+          role="tabpanel"
+          aria-labelledby="tab-today"
+          tabindex="0"
+        >
+          <div class="panel-inner">
+            <article class="card">
+              <div class="section-header">
+                <div>
+                  <h1 class="section-title">Séance de Récupération du Jour</h1>
+                  <p id="today-subtitle" class="section-sub">
+                    Statut physiologique local, garde-fous actifs et minuteur multi-phases.
+                  </p>
+                </div>
+                <span id="today-safety-badge" class="badge badge-emerald">
+                  Garde-fous conformes
+                </span>
+              </div>
+
+              <div class="kpi-grid">
+                <div class="kpi-card is-cyan">
+                  <span class="kpi-label">Séance chargée</span>
+                  <span id="kpi-session-name" class="kpi-value">Aucune</span>
+                  <span id="kpi-session-sub" class="kpi-sub">
+                    Choisir dans Catalogue ou Protocoles
+                  </span>
+                </div>
+                <div class="kpi-card is-emerald">
+                  <span class="kpi-label">Matériel prêt</span>
+                  <span id="kpi-equip-ready" class="kpi-value">0</span>
+                  <span id="kpi-equip-sub" class="kpi-sub">équipements actifs</span>
+                </div>
+                <div class="kpi-card is-amber">
+                  <span class="kpi-label">Seuil SpO₂ IHHT</span>
+                  <span id="kpi-spo2-threshold" class="kpi-value">85 %</span>
+                  <span id="kpi-spo2-sub" class="kpi-sub">Arrêt auto si inférieur</span>
+                </div>
+                <div class="kpi-card is-cyan">
+                  <span class="kpi-label">KAATSU Plafonds</span>
+                  <span id="kpi-kaatsu-caps" class="kpi-value">110 / 170</span>
+                  <span id="kpi-kaatsu-sub" class="kpi-sub">mmHg (Bras / Jambes)</span>
+                </div>
+              </div>
+
+              <div id="today-safety-warnings" class="alert-box" hidden></div>
+
+              <div class="today-reco-bar">
+                <div class="today-reco-actions">
+                  <button type="button" id="today-sync-btn" class="btn btn-primary btn-sm">
+                    Actualiser Intervals &amp; Séance
+                  </button>
+                  <button type="button" id="today-launch-session-btn" class="btn btn-emerald btn-sm">
+                    Charger la séance recommandée
+                  </button>
+                  <span id="today-source-badge" class="badge badge-cyan">Local</span>
+                </div>
+                <div class="today-score-summary">
+                  <span class="kpi-label">Score récupération :</span>
+                  <strong id="today-recovery-score" class="today-score-val">— / 100</strong>
+                  <span id="today-recovery-level" class="badge">—</span>
+                  <span id="today-recovery-sub" class="form-hint"></span>
+                </div>
+              </div>
+
+              <div id="today-protocol-box" class="today-protocol-box">
+                <div class="section-header section-header-compact">
+                  <div>
+                    <h2 id="today-protocol-name" class="item-title">Protocole recommandé</h2>
+                    <p id="today-protocol-rationale" class="item-desc"></p>
+                  </div>
+                  <span id="today-protocol-duration" class="badge badge-emerald">00:00</span>
+                </div>
+                <div id="today-session-items" class="cards-grid"></div>
+                <div id="today-removed-wrap" class="today-removed-wrap" hidden>
+                  <h3 class="form-label removed-title">
+                    Exercices retirés par les garde-fous
+                  </h3>
+                  <ul id="today-removed-list" class="removed-list"></ul>
+                </div>
+              </div>
+            </article>
+
+            <article id="timer-card" class="card">
+              <div class="section-header">
+                <div>
+                  <h2 id="timer-title" class="section-title">Minuteur Multi-Phases</h2>
+                  <p id="timer-subtitle" class="section-sub">
+                    Sélectionnez un exercice ou un protocole pour charger les phases.
+                  </p>
+                </div>
+                <span id="timer-status-badge" class="badge badge-cyan">Prêt</span>
+              </div>
+
+              <div class="timer-layout">
+                <div class="timer-ring-wrap" aria-live="off">
+                  <svg class="timer-ring-svg" viewBox="0 0 200 200" aria-hidden="true">
+                    <circle class="timer-ring-bg" cx="100" cy="100" r="86" />
+                    <circle
+                      id="timer-ring-progress"
+                      class="timer-ring-progress"
+                      cx="100"
+                      cy="100"
+                      r="86"
+                    />
+                  </svg>
+                  <div class="timer-center">
+                    <span id="timer-clock" class="timer-clock">00:00</span>
+                    <span id="timer-phase-label" class="timer-phase-label">En attente</span>
+                    <span id="timer-step-meta" class="timer-step-meta">
+                      Étape 0/0 · Total 00:00
+                    </span>
+                  </div>
+                </div>
+
+                <div class="timer-controls-col">
+                  <div class="timer-btn-row">
+                    <button type="button" id="timer-start-btn" class="btn btn-primary">
+                      Démarrer
+                    </button>
+                    <button
+                      type="button"
+                      id="timer-pause-btn"
+                      class="btn btn-secondary"
+                      disabled
+                    >
+                      Pause
+                    </button>
+                    <button
+                      type="button"
+                      id="timer-skip-btn"
+                      class="btn btn-secondary"
+                      disabled
+                    >
+                      Passer
+                    </button>
+                    <button
+                      type="button"
+                      id="timer-stop-btn"
+                      class="btn btn-danger"
+                      disabled
+                    >
+                      Arrêter
+                    </button>
+                  </div>
+
+                  <div class="timer-btn-row">
+                    <button
+                      type="button"
+                      id="timer-mute-btn"
+                      class="btn btn-secondary btn-sm"
+                      aria-pressed="false"
+                    >
+                      Son : Activé
+                    </button>
+                    <button
+                      type="button"
+                      id="timer-vibrate-btn"
+                      class="btn btn-secondary btn-sm"
+                      aria-pressed="true"
+                    >
+                      Vibration : Activée
+                    </button>
+                  </div>
+
+                  <div id="spo2-guard-box" class="spo2-guard-box">
+                    <div>
+                      <strong>Surveillance SpO₂ en direct (IHHT)</strong>
+                      <div class="form-hint">
+                        Vérifiée chaque seconde via <code>onSafetyCheck()</code>.
+                      </div>
+                    </div>
+                    <div class="spo2-input-group">
+                      <label for="live-spo2-input" class="form-label">SpO₂ (%) :</label>
+                      <input
+                        type="number"
+                        id="live-spo2-input"
+                        class="input spo2-live-input"
+                        min="60"
+                        max="100"
+                        step="1"
+                        placeholder="ex: 95"
+                      />
+                    </div>
+                  </div>
+
+                  <div id="timer-phase-queue" class="phase-queue" aria-label="Phases à venir"></div>
+                </div>
+              </div>
+            </article>
+
+            <article class="card">
+              <div class="section-header">
+                <div>
+                  <h2 class="section-title">Clôture &amp; Journalisation</h2>
+                  <p class="section-sub">
+                    Enregistre la séance localement et l'ajoute à la file Outbox hors-ligne.
+                  </p>
+                </div>
+              </div>
+              <form id="session-log-form" class="form-grid">
+                <div class="form-field">
+                  <label for="session-rpe-input" class="form-label">RPE ressenti (1–10)</label>
+                  <input
+                    type="number"
+                    id="session-rpe-input"
+                    class="input"
+                    min="1"
+                    max="10"
+                    step="1"
+                    value="4"
+                    required
+                  />
+                </div>
+                <div class="form-field">
+                  <label for="session-notes-input" class="form-label">Notes post-séance</label>
+                  <input
+                    type="text"
+                    id="session-notes-input"
+                    class="input"
+                    placeholder="Sensations, congestion, SpO₂ min..."
+                    maxlength="240"
+                  />
+                </div>
+                <div class="form-field form-field-end">
+                  <button type="submit" id="save-session-btn" class="btn btn-emerald">
+                    Enregistrer la séance
+                  </button>
+                </div>
+              </form>
+            </article>
+          </div>
+        </section>
+
+        <!-- ===============================================================
+             ONGLET 2 : CATALOGUE D'EXERCICES
+             =============================================================== -->
+        <section
+          id="panel-catalog"
+          class="tab-panel"
+          role="tabpanel"
+          aria-labelledby="tab-catalog"
+          hidden="until-found"
+        >
+          <div class="panel-inner">
+            <article class="card">
+              <div class="section-header">
+                <div>
+                  <h2 class="section-title">Catalogue d'Exercices</h2>
+                  <p class="section-sub">
+                    Alimenté par <code>catalog.js</code> (étirements, bolster, auto-massage, KAATSU, IHHT, thermique, pressothérapie).
+                  </p>
+                </div>
+                <span id="catalog-count" class="badge badge-cyan">0 exercice</span>
+              </div>
+
+              <div class="filter-bar">
+                <label for="catalog-search" class="form-label visually-hidden">Rechercher</label>
+                <input
+                  type="search"
+                  id="catalog-search"
+                  class="input"
+                  placeholder="Rechercher exercice, zone..."
+                />
+                <select
+                  id="catalog-family-filter"
+                  class="select"
+                  aria-label="Filtrer par famille"
+                >
+                  <option value="ALL">Toutes les familles</option>
+                </select>
+                <label class="checkbox-row checkbox-row-compact">
+                  <input type="checkbox" id="catalog-available-only" />
+                  <span class="checkbox-text">Matériel disponible uniquement</span>
+                </label>
+              </div>
+
+              <div id="catalog-grid" class="cards-grid"></div>
+            </article>
+          </div>
+        </section>
+
+        <!-- ===============================================================
+             ONGLET 3 : PROTOCOLES PRÉDÉFINIS
+             =============================================================== -->
+        <section
+          id="panel-protocols"
+          class="tab-panel"
+          role="tabpanel"
+          aria-labelledby="tab-protocols"
+          hidden="until-found"
+        >
+          <div class="panel-inner">
+            <article class="card">
+              <div class="section-header">
+                <div>
+                  <h2 class="section-title">Protocoles Prédéfinis</h2>
+                  <p class="section-sub">
+                    Séquences multi-exercices adaptées au contexte (post-vélo, post-muscu, HRV basse, soir).
+                  </p>
+                </div>
+                <span id="protocols-count" class="badge badge-emerald">0 protocole</span>
+              </div>
+
+              <div id="protocols-grid" class="cards-grid"></div>
+            </article>
+          </div>
+        </section>
+
+        <!-- ===============================================================
+             ONGLET 4 : MATÉRIEL DISPONIBLE
+             =============================================================== -->
+        <section
+          id="panel-equipment"
+          class="tab-panel"
+          role="tabpanel"
+          aria-labelledby="tab-equipment"
+          hidden="until-found"
+        >
+          <div class="panel-inner">
+            <article class="card">
+              <div class="section-header">
+                <div>
+                  <h2 class="section-title">Matériel Disponible</h2>
+                  <p class="section-sub">
+                    Sélectionnez l'équipement sous la main pour filtrer le catalogue et les protocoles.
+                  </p>
+                </div>
+                <div class="timer-btn-row">
+                  <button
+                    type="button"
+                    id="equip-select-all-btn"
+                    class="btn btn-secondary btn-sm"
+                  >
+                    Tout activer
+                  </button>
+                  <button
+                    type="button"
+                    id="equip-select-none-btn"
+                    class="btn btn-secondary btn-sm"
+                  >
+                    Sans matériel
+                  </button>
+                </div>
+              </div>
+
+              <div id="equipment-grid" class="equipment-grid"></div>
+            </article>
+          </div>
+        </section>
+
+        <!-- ===============================================================
+             ONGLET 5 : HISTORIQUE & OUTBOX
+             =============================================================== -->
+        <section
+          id="panel-history"
+          class="tab-panel"
+          role="tabpanel"
+          aria-labelledby="tab-history"
+          hidden="until-found"
+        >
+          <div class="panel-inner">
+            <article class="card">
+              <div class="section-header">
+                <div>
+                  <h2 class="section-title">Historique des Séances</h2>
+                  <p class="section-sub">
+                    Séances terminées ou interrompues par sécurité, prêtes pour synchronisation.
+                  </p>
+                </div>
+                <div class="timer-btn-row">
+                  <button
+                    type="button"
+                    id="history-export-btn"
+                    class="btn btn-secondary btn-sm"
+                  >
+                    Exporter JSON
+                  </button>
+                  <button
+                    type="button"
+                    id="history-clear-btn"
+                    class="btn btn-danger btn-sm"
+                  >
+                    Vider historique
+                  </button>
+                </div>
+              </div>
+
+              <div id="history-list" class="history-list"></div>
+            </article>
+          </div>
+        </section>
+
+        <!-- ===============================================================
+             ONGLET 6 : RÉGLAGES, QUESTIONNAIRE SÉCURITÉ, KAATSU & SPO2
+             =============================================================== -->
+        <section
+          id="panel-settings"
+          class="tab-panel"
+          role="tabpanel"
+          aria-labelledby="tab-settings"
+          hidden="until-found"
+        >
+          <div class="panel-inner">
+            <form id="settings-form" novalidate>
+              <article class="card card-spaced">
+                <div class="section-header">
+                  <div>
+                    <h2 class="section-title">
+                      Questionnaire de Sécurité (KAATSU / IHHT / Sauna)
+                    </h2>
+                    <p class="section-sub">
+                      Toute contre-indication cochée bloque automatiquement l'accès aux protocoles à risque.
+                    </p>
+                  </div>
+                  <span id="settings-safety-summary" class="badge badge-emerald">
+                    Apte
+                  </span>
+                </div>
+
+                <div class="checkbox-list">
+                  <label class="checkbox-row">
+                    <input type="checkbox" id="q-kaatsu-tvp" />
+                    <span class="checkbox-text">
+                      <strong>KAATSU — Antécédent de TVP ou embolie pulmonaire</strong>
+                      <span class="checkbox-sub">Contre-indication absolue au garrot partiel (BFR).</span>
+                    </span>
+                  </label>
+                  <label class="checkbox-row">
+                    <input type="checkbox" id="q-kaatsu-hta" />
+                    <span class="checkbox-text">
+                      <strong>KAATSU — Hypertension artérielle (HTA) non contrôlée</strong>
+                      <span class="checkbox-sub">Risque de poussée hypertensive sous occlusion veineuse.</span>
+                    </span>
+                  </label>
+                  <label class="checkbox-row">
+                    <input type="checkbox" id="q-kaatsu-varices" />
+                    <span class="checkbox-text">
+                      <strong>KAATSU — Varices sévères / insuffisance veineuse marquée</strong>
+                      <span class="checkbox-sub">Risque vasculaire périphérique sur les membres inférieurs.</span>
+                    </span>
+                  </label>
+                  <label class="checkbox-row">
+                    <input type="checkbox" id="q-kaatsu-pregnancy" />
+                    <span class="checkbox-text">
+                      <strong>KAATSU / Thermique — Grossesse</strong>
+                      <span class="checkbox-sub">Contre-indication KAATSU, sauna haute température et hypoxie.</span>
+                    </span>
+                  </label>
+                  <label class="checkbox-row">
+                    <input type="checkbox" id="q-kaatsu-first-alone" />
+                    <span class="checkbox-text">
+                      <strong>KAATSU — Première utilisation sans supervision</strong>
+                      <span class="checkbox-sub">Interdit la première séance BFR seul sans binôme présent.</span>
+                    </span>
+                  </label>
+                  <label class="checkbox-row">
+                    <input type="checkbox" id="q-lymphedema-av-fistula" />
+                    <span class="checkbox-text">
+                      <strong>KAATSU / Compression — Lymphœdème ou fistule artério-veineuse</strong>
+                      <span class="checkbox-sub">Interdiction absolue de garrot partiel ou de compression pneumatique sur le membre.</span>
+                    </span>
+                  </label>
+                  <label class="checkbox-row">
+                    <input type="checkbox" id="q-severe-respiratory-anemia" />
+                    <span class="checkbox-text">
+                      <strong>IHHT — BPCO sévère, hypertension pulmonaire ou anémie sévère</strong>
+                      <span class="checkbox-sub">Contre-indique l'exposition hypoxique intermittente (désaturation rapide).</span>
+                    </span>
+                  </label>
+                  <label class="checkbox-row">
+                    <input type="checkbox" id="q-acute-fever-infection" />
+                    <span class="checkbox-text">
+                      <strong>Systémique — Fièvre, syndrome viral ou infection aiguë</strong>
+                      <span class="checkbox-sub">Bloque KAATSU, IHHT, thermique et compression pneumatique.</span>
+                    </span>
+                  </label>
+                  <label class="checkbox-row">
+                    <input type="checkbox" id="q-cold-urticaria-raynaud" />
+                    <span class="checkbox-text">
+                      <strong>Bain froid — Urticaire au froid, cryoglobulinémie ou Raynaud sévère</strong>
+                      <span class="checkbox-sub">Risque de vasospasme digital sévère ou d'ischémie périphérique.</span>
+                    </span>
+                  </label>
+                  <label class="checkbox-row">
+                    <input type="checkbox" id="q-acute-trauma-open-wound" />
+                    <span class="checkbox-text">
+                      <strong>Traumatologie — Fracture non consolidée, lésion aiguë (&lt; 72 h) ou plaie ouverte</strong>
+                      <span class="checkbox-sub">Bloque auto-massage, étirements, KAATSU et pressothérapie.</span>
+                    </span>
+                  </label>
+                  <label class="checkbox-row">
+                    <input type="checkbox" id="q-spinal-instability-radiculopathy" />
+                    <span class="checkbox-text">
+                      <strong>Rachis / Bolster — Hernie discale aiguë hyperalgique ou radiculopathie évolutive</strong>
+                      <span class="checkbox-sub">Suspend les extensions passives sur bolster et étirements rachidiens.</span>
+                    </span>
+                  </label>
+                  <label class="checkbox-row">
+                    <input type="checkbox" id="q-orthostatic-hypotension" />
+                    <span class="checkbox-text">
+                      <strong>Thermique / Bolster — Hypotension orthostatique marquée ou vertiges récents</strong>
+                      <span class="checkbox-sub">Contre-indique sauna chaud et décubitus prolongé non surveillé.</span>
+                    </span>
+                  </label>
+                  <label class="checkbox-row">
+                    <input type="checkbox" id="q-ihht-safety-ok" />
+                    <span class="checkbox-text">
+                      <strong>IHHT / Hyperoxie — Zone sans flamme ni corps gras &amp; oxymètre actif</strong>
+                      <span class="checkbox-sub">Obligatoire pour autoriser les protocoles d'alternance hypoxie/hyperoxie.</span>
+                    </span>
+                  </label>
+                  <label class="checkbox-row">
+                    <input type="checkbox" id="q-sauna-cleared" />
+                    <span class="checkbox-text">
+                      <strong>Sauna / Bain froid — Tolérance cardiovasculaire confirmée</strong>
+                      <span class="checkbox-sub">Absence de malaise orthostatique ou pathologie cardiaque aiguë.</span>
+                    </span>
+                  </label>
+                  <label class="checkbox-row">
+                    <input type="checkbox" id="q-block-cold-strength" checked />
+                    <span class="checkbox-text">
+                      <strong>Bain froid post-musculation — Blocage automatique (&lt; 4 h)</strong>
+                      <span class="checkbox-sub">Préserve la signalisation hypertrophique après une séance WebStrength.</span>
+                    </span>
+                  </label>
+                </div>
+              </article>
+
+              <article class="card card-spaced">
+                <div class="section-header">
+                  <div>
+                    <h2 class="section-title">Pressions KAATSU par Membre &amp; Seuil SpO₂</h2>
+                    <p class="section-sub">
+                      Plafonds stricts de pression d'occlusion (mmHg) et seuil d'interruption SpO₂.
+                    </p>
+                  </div>
+                </div>
+
+                <div class="form-grid">
+                  <div class="form-field">
+                    <label for="kaatsu-arm-left" class="form-label">Bras gauche (mmHg)</label>
+                    <input
+                      type="number"
+                      id="kaatsu-arm-left"
+                      class="input"
+                      min="40"
+                      max="160"
+                      step="5"
+                      value="110"
+                      required
+                    />
+                    <span class="form-hint">Plage recommandée : 40–160 mmHg</span>
+                  </div>
+                  <div class="form-field">
+                    <label for="kaatsu-arm-right" class="form-label">Bras droit (mmHg)</label>
+                    <input
+                      type="number"
+                      id="kaatsu-arm-right"
+                      class="input"
+                      min="40"
+                      max="160"
+                      step="5"
+                      value="110"
+                      required
+                    />
+                    <span class="form-hint">Plage recommandée : 40–160 mmHg</span>
+                  </div>
+                  <div class="form-field">
+                    <label for="kaatsu-leg-left" class="form-label">Jambe gauche (mmHg)</label>
+                    <input
+                      type="number"
+                      id="kaatsu-leg-left"
+                      class="input"
+                      min="60"
+                      max="240"
+                      step="5"
+                      value="170"
+                      required
+                    />
+                    <span class="form-hint">Plage recommandée : 60–240 mmHg</span>
+                  </div>
+                  <div class="form-field">
+                    <label for="kaatsu-leg-right" class="form-label">Jambe droite (mmHg)</label>
+                    <input
+                      type="number"
+                      id="kaatsu-leg-right"
+                      class="input"
+                      min="60"
+                      max="240"
+                      step="5"
+                      value="170"
+                      required
+                    />
+                    <span class="form-hint">Plage recommandée : 60–240 mmHg</span>
+                  </div>
+                  <div class="form-field">
+                    <label for="kaatsu-max-min" class="form-label">Durée max occlusion (min)</label>
+                    <input
+                      type="number"
+                      id="kaatsu-max-min"
+                      class="input"
+                      min="2"
+                      max="15"
+                      step="1"
+                      value="10"
+                      required
+                    />
+                    <span class="form-hint">Plafond sécurité : 15 min max</span>
+                  </div>
+                  <div class="form-field">
+                    <label for="spo2-threshold" class="form-label">Seuil SpO₂ arrêt auto (%)</label>
+                    <input
+                      type="number"
+                      id="spo2-threshold"
+                      class="input"
+                      min="80"
+                      max="95"
+                      step="1"
+                      value="85"
+                      required
+                    />
+                    <span class="form-hint">Arrêt immédiat si SpO₂ &lt; seuil (plancher 80 %, défaut 85 %)</span>
+                  </div>
+                </div>
+              </article>
+
+              <article class="card">
+                <div class="section-header">
+                  <div>
+                    <h2 class="section-title">Coffre-Fort Local &amp; Synchronisation</h2>
+                    <p class="section-sub">
+                      Clés API Intervals.icu / Gemini et sauvegarde Drive via <code>vault.js</code> &amp; <code>driveSync.js</code>.
+                    </p>
+                  </div>
+                </div>
+
+                <div class="form-grid">
+                  <div class="form-field">
+                    <label for="vault-athlete-id" class="form-label">Intervals Athlete ID</label>
+                    <input
+                      type="text"
+                      id="vault-athlete-id"
+                      class="input"
+                      placeholder="0 ou i12345"
+                      autocomplete="off"
+                    />
+                  </div>
+                  <div class="form-field">
+                    <label for="vault-intervals-key" class="form-label">Clé API Intervals.icu</label>
+                    <input
+                      type="password"
+                      id="vault-intervals-key"
+                      class="input"
+                      placeholder="Clé stockée localement"
+                      autocomplete="off"
+                    />
+                  </div>
+                  <div class="form-field">
+                    <label for="vault-gemini-key" class="form-label">Clé API Gemini</label>
+                    <input
+                      type="password"
+                      id="vault-gemini-key"
+                      class="input"
+                      placeholder="AIza..."
+                      autocomplete="off"
+                    />
+                  </div>
+                  <div class="form-field">
+                    <label for="vault-drive-url" class="form-label">Webhook Google Drive (HTTPS)</label>
+                    <input
+                      type="url"
+                      id="vault-drive-url"
+                      class="input"
+                      placeholder="https://script.google.com/macros/s/..."
+                      autocomplete="off"
+                    />
+                  </div>
+                </div>
+
+                <div class="timer-btn-row btn-row-spaced">
+                  <button type="submit" id="save-settings-btn" class="btn btn-primary">
+                    Enregistrer les réglages
+                  </button>
+                  <button type="button" id="push-drive-btn" class="btn btn-secondary">
+                    Synchroniser vers Drive
+                  </button>
+                  <button type="button" id="export-vault-btn" class="btn btn-secondary">
+                    Exporter Coffre-fort
+                  </button>
+                </div>
+              </article>
+            </form>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <div id="toast-banner" class="toast-banner" role="status" aria-live="polite" hidden></div>
+  </body>
+</html>
