@@ -105,4 +105,47 @@ describe("Durcissement statique index.html, sw.js et app.js", () => {
     assert.ok(app.includes("clampNumber(parsed?.spo2ThresholdPct, 80, 95, 85)"));
     assert.equal(/\bsetAttribute\s*\(\s*['"]style['"]/.test(app), false);
   });
+
+  it("Conformité PWA smartphone : manifest PNG, meta/apple-touch-icon, #pwa-install-btn sans style= et sw v2", () => {
+    const manifest = JSON.parse(
+      readFileSync(join(ROOT_DIR, "manifest.webmanifest"), "utf8")
+    );
+    assert.equal(manifest.id, "./");
+    assert.ok(Array.isArray(manifest.icons));
+
+    const hasIcon = (src, sizes, purpose) =>
+      manifest.icons.some(
+        (icon) =>
+          icon.src === src &&
+          icon.type === "image/png" &&
+          icon.sizes === sizes &&
+          icon.purpose === purpose
+      );
+
+    assert.ok(hasIcon("./icons/icon-192.png", "192x192", "any"));
+    assert.ok(hasIcon("./icons/icon-512.png", "512x512", "any"));
+    assert.ok(hasIcon("./icons/icon-512-maskable.png", "512x512", "maskable"));
+
+    const html = readFileSync(join(ROOT_DIR, "index.html"), "utf8");
+    assert.match(
+      html,
+      /<link\s+rel="apple-touch-icon"\s+sizes="180x180"\s+href="\.\/icons\/icon-180\.png"\s*\/>/
+    );
+    assert.match(
+      html,
+      /<button[^>]*id="pwa-install-btn"[^>]*>/
+    );
+    assert.equal(/\sstyle=/.test(html), false);
+
+    const sw = readFileSync(join(ROOT_DIR, "sw.js"), "utf8");
+    assert.match(sw, /const CACHE_NAME = "webrecovery-v2";/);
+    for (const iconPath of [
+      "./icons/icon-180.png",
+      "./icons/icon-192.png",
+      "./icons/icon-512.png",
+      "./icons/icon-512-maskable.png",
+    ]) {
+      assert.ok(sw.includes(`"${iconPath}"`), `Icone manquante dans sw.js : ${iconPath}`);
+    }
+  });
 });

@@ -5,7 +5,7 @@
  * Network-Only strict sur Intervals.icu, Gemini API et Google Apps Script.
  */
 
-const CACHE_NAME = "webrecovery-v1";
+const CACHE_NAME = "webrecovery-v2";
 
 const PRECACHE_ASSETS = [
   "./",
@@ -24,6 +24,10 @@ const PRECACHE_ASSETS = [
   "./driveSync.js",
   "./errorGuard.js",
   "./icon.svg",
+  "./icons/icon-180.png",
+  "./icons/icon-192.png",
+  "./icons/icon-512.png",
+  "./icons/icon-512-maskable.png",
   "./manifest.webmanifest",
 ];
 

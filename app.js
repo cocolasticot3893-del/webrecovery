@@ -103,6 +103,8 @@ let timer = null;
 /** @type {ReturnType<typeof createBleOximeter> | null} */
 let bleOximeter = null;
 let toastTimerId = 0;
+/** @type {any} */
+let deferredInstallPrompt = null;
 
 /**
  * Charge le coffre-fort sans planter si la structure est partielle.
@@ -2115,6 +2117,39 @@ function bindEvents() {
 
   window.addEventListener("online", updateNetworkStatus);
   window.addEventListener("offline", updateNetworkStatus);
+
+  window.addEventListener("beforeinstallprompt", (event) => {
+    event.preventDefault();
+    deferredInstallPrompt = event;
+    if (dom.pwaInstallBtn) {
+      dom.pwaInstallBtn.hidden = false;
+    }
+  });
+
+  dom.pwaInstallBtn?.addEventListener("click", async () => {
+    if (!deferredInstallPrompt) {
+      return;
+    }
+    const promptEvent = deferredInstallPrompt;
+    deferredInstallPrompt = null;
+    try {
+      await promptEvent.prompt();
+      await promptEvent.userChoice;
+    } catch {
+      // Ignorer les erreurs si l'invite native est annulée
+    } finally {
+      if (dom.pwaInstallBtn) {
+        dom.pwaInstallBtn.hidden = true;
+      }
+    }
+  });
+
+  window.addEventListener("appinstalled", () => {
+    deferredInstallPrompt = null;
+    if (dom.pwaInstallBtn) {
+      dom.pwaInstallBtn.hidden = true;
+    }
+  });
 }
 
 function cacheDomReferences() {
@@ -2124,6 +2159,7 @@ function cacheDomReferences() {
   dom.outboxCount = document.getElementById("outbox-count");
   dom.safetyStatusPill = document.getElementById("safety-status-pill");
   dom.intervalsStatusPill = document.getElementById("intervals-status-pill");
+  dom.pwaInstallBtn = document.getElementById("pwa-install-btn");
   dom.toastBanner = document.getElementById("toast-banner");
 
   dom.todaySafetyBadge = document.getElementById("today-safety-badge");

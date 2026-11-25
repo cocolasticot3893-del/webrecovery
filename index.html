@@ -12,6 +12,13 @@
     />
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#060d18" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <meta name="apple-mobile-web-app-title" content="WebRecovery" />
     <meta
       name="description"
       content="WebRecovery — Protocoles de récupération (KAATSU/BFR, IHHT, Thermique, Bolster, Auto-massage, Mobilité) et télémétrie Intervals.icu offline-first."
@@ -19,7 +26,7 @@
     <title>WebRecovery — Récupération &amp; Garde-Fous</title>
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" type="image/svg+xml" href="./icon.svg" />
-    <link rel="apple-touch-icon" href="./icon.svg" />
+    <link rel="apple-touch-icon" sizes="180x180" href="./icons/icon-180.png" />
     <link rel="stylesheet" href="./styles.css" />
     <script src="./errorGuard.js" defer></script>
     <script type="module" src="./app.js"></script>
@@ -64,6 +71,14 @@
         <span id="intervals-status-pill" class="status-pill is-muted">
           Intervals : —
         </span>
+        <button
+          type="button"
+          id="pwa-install-btn"
+          class="btn-install-pwa"
+          hidden
+        >
+          Installer
+        </button>
       </div>
     </header>
 
